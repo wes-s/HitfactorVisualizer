@@ -193,8 +193,7 @@
 
   <script>
     const API_BASE = "https://floral-snow-9556.wwscoggin.workers.dev";
-    const MAX_SELECTIONS = 5;
-
+    
     function formatDivisionLabel(value) {
       return String(value || "").split("_").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
     }
@@ -243,7 +242,7 @@
         .attr("y1", margin.top)
         .attr("y2", height - margin.bottom)
         .attr("stroke", "rgba(255,255,255,0.35)")
-        .attr("stroke-width", 2);
+        .attr("stroke-width", .5);
     }
 
     function seriesKey(selection) {
@@ -282,6 +281,36 @@
       return Math.max(1.25, 2.6 - seriesCount * 0.08);
     }
 
+    function allocateSeriesColor(key) {
+      if (state.colorAssignments.has(key)) return state.colorAssignments.get(key);
+
+      const palette = [
+        "#22c55e",
+        "#ef4444",
+        "#4e79a7",
+        "#f28e2b",
+        "#e15759",
+        "#76b7b2",
+        "#59a14f",
+        "#edc948",
+        "#b07aa1",
+        "#ff9da7",
+        "#9c755f",
+        "#bab0ab",
+        "#8dd3c7",
+        "#80b1d3",
+        "#fdb462",
+        "#b3de69",
+        "#fccde5",
+        "#bc80bd"
+      ];
+
+      const used = new Set(state.colorAssignments.values());
+      const chosen = palette.find(c => !used.has(c)) || palette[state.colorAssignments.size % palette.length];
+      state.colorAssignments.set(key, chosen);
+      return chosen;
+    }
+
     function normalizeDisplayName(name) {
       const trimmed = String(name || "").trim();
       if (!trimmed) return trimmed;
@@ -305,7 +334,8 @@
       showPeak: false,
       showPrediction: false,
       showClassifierScores: true,
-      focusedSeries: null
+      focusedSeries: null,
+      colorAssignments: new Map()
     };
 
     const els = {
@@ -325,6 +355,7 @@
       legend: document.getElementById("legend"),
       showPeakToggle: document.getElementById("showPeakToggle"),
       showPredictionToggle: document.getElementById("showPredictionToggle"),
+      showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle"),
       showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle")
     };
 
@@ -533,26 +564,54 @@
     }
 
     function linearRegressionPrediction(values, valueKey, monthsForward = 12) {
-      const filtered = values.filter(d => d.date && Number.isFinite(d[valueKey]));
+      if (!values.length) return [];
+
+      const latestDate = d3.max(values, d => d.date);
+      const cutoff = new Date(latestDate);
+      cutoff.setMonth(cutoff.getMonth() - 12);
+
+      const filtered = values
+        .filter(d => d.date >= cutoff && Number.isFinite(d[valueKey]))
+        .sort((a, b) => a.date - b.date);
+
       if (filtered.length < 2) return [];
+
       const xs = filtered.map(d => d.date.getTime());
       const ys = filtered.map(d => d[valueKey]);
-      const xMean = xs.reduce((a, b) => a + b, 0) / xs.length;
-      const yMean = ys.reduce((a, b) => a + b, 0) / ys.length;
-      let numerator = 0, denominator = 0;
+
+      const xMean = d3.mean(xs);
+      const yMean = d3.mean(ys);
+
+      let numerator = 0;
+      let denominator = 0;
+
       for (let i = 0; i < xs.length; i++) {
         numerator += (xs[i] - xMean) * (ys[i] - yMean);
         denominator += (xs[i] - xMean) ** 2;
       }
+
       if (denominator === 0) return [];
-      const slope = numerator / denominator;
-      const intercept = yMean - slope * xMean;
-      const lastDate = filtered[filtered.length - 1].date;
-      const projectedDate = new Date(lastDate);
+
+      let slope = numerator / denominator;
+
+      const msPerMonth = 1000 * 60 * 60 * 24 * 30.4375;
+      let slopePerMonth = slope * msPerMonth;
+      const maxMonthlyChange = valueKey === "rating" ? 40 : 4;
+
+      slopePerMonth = Math.max(-maxMonthlyChange, Math.min(maxMonthlyChange, slopePerMonth));
+      slope = slopePerMonth / msPerMonth;
+
+      const latestActual = filtered[filtered.length - 1];
+      const projectedDate = new Date(latestActual.date);
       projectedDate.setMonth(projectedDate.getMonth() + monthsForward);
+
+      const projectedValue =
+        latestActual[valueKey] +
+        slope * (projectedDate.getTime() - latestActual.date.getTime());
+
       return [
-        { date: lastDate, value: slope * lastDate.getTime() + intercept },
-        { date: projectedDate, value: slope * projectedDate.getTime() + intercept }
+        { date: latestActual.date, value: latestActual[valueKey] },
+        { date: projectedDate, value: projectedValue }
       ];
     }
 
@@ -602,7 +661,6 @@
       const query = els.shooterInput.value.trim();
       const division = normalizeDivision(els.divisionSelect.value);
       if (!query) return flashStatus("Enter a shooter name.", "error");
-      if (state.selections.length >= MAX_SELECTIONS) return flashStatus("Maximum 5 shooter/division selections.", "error");
 
       setLoading(true, "Resolving shooter...");
       flashStatus("Resolving shooter and loading selected division...");
@@ -666,6 +724,7 @@
       if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
       if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
       if (state.focusedSeries) url.searchParams.set("focus", encodeURIComponent(state.focusedSeries)); else url.searchParams.delete("focus");
+      if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
       if (state.selections.length) {
         const value = state.selections.map(sel => [
           encodeURIComponent(sel.name),
@@ -729,7 +788,7 @@
         state.selections = pairs.split("|").map(part => {
           const [name, division, id] = part.split("~").map(v => decodeURIComponent(v || ""));
           return { name, division: normalizeDivision(division), id: id ? Number(id) || id : null };
-        }).filter(sel => sel.name && sel.division).slice(0, MAX_SELECTIONS);
+        }).filter(sel => sel.name && sel.division);
       }
     }
 
@@ -740,15 +799,12 @@
     }
 
     function getColorScale() {
-      const preferred = [
-        "#22c55e",
-        "#ef4444",
-        ...d3.schemeTableau10.filter(c => c.toLowerCase() !== "#e15759" && c.toLowerCase() !== "#59a14f"),
-        ...d3.schemeSet3
-      ];
-      return d3.scaleOrdinal()
-        .domain(state.selections.map(d => seriesKey(d)))
-        .range(preferred);
+      const scale = d3.scaleOrdinal();
+      state.selections.forEach(sel => {
+        const key = seriesKey(sel);
+        scale.domain([...scale.domain(), key]).range([...scale.range(), allocateSeriesColor(key)]);
+      });
+      return scale;
     }
 
     function buildSvg() {
@@ -848,7 +904,7 @@
         const visibleValues = filterByDate(fullValues);
         const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullValues, "rating")) : [];
         const predictionValues = state.showPrediction ? linearRegressionPrediction(visibleValues, "rating", 12) : [];
-        return { key: seriesKey(sel), values: visibleValues, peakValues, predictionValues };
+        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, values: visibleValues, peakValues, predictionValues };
       }).filter(d => d.values.length);
 
       if (!series.length) return showEmpty("No ELO history available for the selected shooter/division/date combinations.");
@@ -878,7 +934,6 @@
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
 
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
-      const pointRadius = getPointRadius(series.length);
 
       series.forEach(serie => {
         svg.append("path").datum(serie.values).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", getSeriesOpacity(serie.key)).attr("d", valueLine);
@@ -912,7 +967,7 @@
         const visibleRankings = filterByDate(fullRankings);
         const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullRankings, "ranking")) : [];
         const predictionValues = state.showPrediction ? linearRegressionPrediction(visibleRankings, "ranking", 12) : [];
-        return { key: seriesKey(sel), classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
+        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
       }).filter(d => d.classifiers.length || d.rankings.length);
 
       if (!series.length) return showEmpty("No classifier data available for the selected shooter/division/date combinations.");
@@ -942,8 +997,6 @@
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
 
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(d.ranking));
-      const classifierPointRadius = getPointRadius(series.length);
-      const rankPointRadius = getRankPointRadius(series.length);
 
       series.forEach(serie => {
         svg.append("path").datum(serie.rankings).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", getSeriesOpacity(serie.key)).attr("d", rankLine);
