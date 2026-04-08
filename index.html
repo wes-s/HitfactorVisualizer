@@ -564,7 +564,7 @@
       const query = els.shooterInput.value.trim();
       const division = normalizeDivision(els.divisionSelect.value);
       if (!query) return flashStatus("Enter a shooter name.", "error");
-      if (state.selections.length >= MAX_SELECTIONS) return flashStatus("Maximum 5 shooter/division selections.", "error");
+      //if (state.selections.length >= MAX_SELECTIONS) return flashStatus("Maximum 5 shooter/division selections.", "error");
 
       setLoading(true, "Resolving shooter...");
       flashStatus("Resolving shooter and loading selected division...");
