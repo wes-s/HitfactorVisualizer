@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hitfactor Visualizer</title>
+  <title>Hitfactor USPSA Visualizer</title>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <style>
     :root {
@@ -243,7 +243,43 @@
         .attr("y1", margin.top)
         .attr("y2", height - margin.bottom)
         .attr("stroke", "rgba(255,255,255,0.35)")
-        .attr("stroke-width", .5);
+        .attr("stroke-width", 2);
+    }
+
+    function seriesKey(selection) {
+      return `${normalizeDisplayName(selection.name)} · ${selection.division}`;
+    }
+
+    function isSeriesFocused(key) {
+      return state.focusedSeries === key;
+    }
+
+    function hasFocusedSeries() {
+      return !!state.focusedSeries;
+    }
+
+    function toggleSeriesFocus(key) {
+      state.focusedSeries = state.focusedSeries === key ? null : key;
+      syncUrlState(true);
+      render();
+    }
+
+    function getSeriesOpacity(key) {
+      if (!hasFocusedSeries()) return 1;
+      return isSeriesFocused(key) ? 1 : 0.18;
+    }
+
+    function getSeriesStrokeWidth(key, base = 2.5) {
+      if (!hasFocusedSeries()) return base;
+      return isSeriesFocused(key) ? base + 1.25 : Math.max(1, base - 0.75);
+    }
+
+    function getPointRadius(seriesCount) {
+      return Math.max(1.5, 4 - seriesCount * 0.12);
+    }
+
+    function getRankPointRadius(seriesCount) {
+      return Math.max(1.25, 2.6 - seriesCount * 0.08);
     }
 
     function normalizeDisplayName(name) {
@@ -268,7 +304,8 @@
       chartHeight: null,
       showPeak: false,
       showPrediction: false,
-      showClassifierScores: true
+      showClassifierScores: true,
+      focusedSeries: null
     };
 
     const els = {
@@ -330,6 +367,7 @@
 
       els.clearSelectionsBtn.addEventListener("click", () => {
         state.selections = [];
+        state.focusedSeries = null;
         renderSelections();
         syncUrlState(true);
         render();
@@ -564,7 +602,7 @@
       const query = els.shooterInput.value.trim();
       const division = normalizeDivision(els.divisionSelect.value);
       if (!query) return flashStatus("Enter a shooter name.", "error");
-      //if (state.selections.length >= MAX_SELECTIONS) return flashStatus("Maximum 5 shooter/division selections.", "error");
+      if (state.selections.length >= MAX_SELECTIONS) return flashStatus("Maximum 5 shooter/division selections.", "error");
 
       setLoading(true, "Resolving shooter...");
       flashStatus("Resolving shooter and loading selected division...");
@@ -595,6 +633,10 @@
     }
 
     function removeSelection(index) {
+      const removed = state.selections[index];
+      if (removed && state.focusedSeries === seriesKey(removed)) {
+        state.focusedSeries = null;
+      }
       state.selections.splice(index, 1);
       renderSelections();
       syncUrlState(true);
@@ -623,6 +665,7 @@
       if (state.showPeak) url.searchParams.set("peak", "1"); else url.searchParams.delete("peak");
       if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
       if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
+      if (state.focusedSeries) url.searchParams.set("focus", encodeURIComponent(state.focusedSeries)); else url.searchParams.delete("focus");
       if (state.selections.length) {
         const value = state.selections.map(sel => [
           encodeURIComponent(sel.name),
@@ -644,7 +687,7 @@
       const url = buildShareUrl();
       try {
         if (navigator.share) {
-          await navigator.share({ title: "Hitfactor Visualizer", url });
+          await navigator.share({ title: "Hitfactor USPSA Visualizer", url });
         } else if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(url);
           flashStatus("Share URL copied to clipboard.", "ok");
@@ -668,12 +711,14 @@
       const peak = params.get("peak");
       const predict = params.get("predict");
       const classifiers = params.get("classifiers");
+      const focus = params.get("focus");
       if (tab === "elo" || tab === "classifiers") state.activeTab = tab;
       if (start) state.startDate = start;
       if (end) state.endDate = end;
       state.showPeak = peak === "1";
       state.showPrediction = predict === "1";
       state.showClassifierScores = classifiers !== "0";
+      state.focusedSeries = focus ? decodeURIComponent(focus) : null;
       els.startDate.value = state.startDate;
       els.endDate.value = state.endDate;
       els.showPeakToggle.checked = state.showPeak;
@@ -702,7 +747,7 @@
         ...d3.schemeSet3
       ];
       return d3.scaleOrdinal()
-        .domain(state.selections.map(d => `${d.name} · ${d.division}`))
+        .domain(state.selections.map(d => seriesKey(d)))
         .range(preferred);
     }
 
@@ -719,11 +764,19 @@
 
     function renderLegend(color) {
       els.legend.innerHTML = "";
+
       state.selections.forEach(sel => {
-        const key = `${normalizeDisplayName(sel.name)} · ${sel.division}`;
-        const item = document.createElement("div");
+        const key = seriesKey(sel);
+        const focused = isSeriesFocused(key);
+
+        const item = document.createElement("button");
+        item.type = "button";
         item.className = "legend-item";
+        item.style.opacity = hasFocusedSeries() ? (focused ? "1" : "0.45") : "1";
+        item.title = focused ? "Click to clear focus" : "Click to focus";
+        item.setAttribute("aria-pressed", focused ? "true" : "false");
         item.innerHTML = `<span class="swatch" style="background:${color(key)}"></span><span>${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)}</span>`;
+        item.addEventListener("click", () => toggleSeriesFocus(key));
         els.legend.appendChild(item);
       });
     }
@@ -795,7 +848,7 @@
         const visibleValues = filterByDate(fullValues);
         const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullValues, "rating")) : [];
         const predictionValues = state.showPrediction ? linearRegressionPrediction(visibleValues, "rating", 12) : [];
-        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, values: visibleValues, peakValues, predictionValues };
+        return { key: seriesKey(sel), values: visibleValues, peakValues, predictionValues };
       }).filter(d => d.values.length);
 
       if (!series.length) return showEmpty("No ELO history available for the selected shooter/division/date combinations.");
@@ -825,11 +878,20 @@
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
 
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
+      const pointRadius = getPointRadius(series.length);
 
       series.forEach(serie => {
-        svg.append("path").datum(serie.values).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", 2.5).attr("d", valueLine);
-        if (state.showPeak) drawPeakLine(svg, serie.peakValues, x, y, color(serie.key));
-        if (state.showPrediction) drawPredictionLine(svg, serie.predictionValues, x, y, color(serie.key));
+        svg.append("path").datum(serie.values).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", getSeriesOpacity(serie.key)).attr("d", valueLine);
+        if (state.showPeak) {
+          svg.append("g")
+            .attr("opacity", getSeriesOpacity(serie.key))
+            .call(g => drawPeakLine(g, serie.peakValues, x, y, color(serie.key)));
+        }
+        if (state.showPrediction) {
+          svg.append("g")
+            .attr("opacity", getSeriesOpacity(serie.key))
+            .call(g => drawPredictionLine(g, serie.predictionValues, x, y, color(serie.key)));
+        }
         svg.append("g").selectAll("circle").data(serie.values).join("circle")
           .attr("cx", d => x(d.date)).attr("cy", d => y(d.rating)).attr("r", 3.25).attr("fill", color(serie.key))
           .on("mousemove", (event, d) => {
@@ -850,7 +912,7 @@
         const visibleRankings = filterByDate(fullRankings);
         const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullRankings, "ranking")) : [];
         const predictionValues = state.showPrediction ? linearRegressionPrediction(visibleRankings, "ranking", 12) : [];
-        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
+        return { key: seriesKey(sel), classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
       }).filter(d => d.classifiers.length || d.rankings.length);
 
       if (!series.length) return showEmpty("No classifier data available for the selected shooter/division/date combinations.");
@@ -880,11 +942,21 @@
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
 
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(d.ranking));
+      const classifierPointRadius = getPointRadius(series.length);
+      const rankPointRadius = getRankPointRadius(series.length);
 
       series.forEach(serie => {
-        svg.append("path").datum(serie.rankings).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", 2.5).attr("d", rankLine);
-        if (state.showPeak) drawPeakLine(svg, serie.peakValues, x, y, color(serie.key));
-        if (state.showPrediction) drawPredictionLine(svg, serie.predictionValues, x, y, color(serie.key));
+        svg.append("path").datum(serie.rankings).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", getSeriesOpacity(serie.key)).attr("d", rankLine);
+        if (state.showPeak) {
+          svg.append("g")
+            .attr("opacity", getSeriesOpacity(serie.key))
+            .call(g => drawPeakLine(g, serie.peakValues, x, y, color(serie.key)));
+        }
+        if (state.showPrediction) {
+          svg.append("g")
+            .attr("opacity", getSeriesOpacity(serie.key))
+            .call(g => drawPredictionLine(g, serie.predictionValues, x, y, color(serie.key)));
+        }
 
         if (state.showClassifierScores) {
           svg.append("g").selectAll("circle.classifier").data(serie.classifiers).join("circle")
