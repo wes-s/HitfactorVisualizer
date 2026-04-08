@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hitfactor Visualizer</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <style>
+    :root {
+      --bg: #020617;
+      --panel: rgba(10, 20, 45, 0.92);
+      --panel-2: rgba(30, 41, 59, 0.95);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --border: rgba(255,255,255,0.12);
+      --danger: #f87171;
+      --ok: #86efac;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(30,64,175,0.18), transparent 35%),
+        linear-gradient(180deg, #020617 0%, #06112a 100%);
+    }
+    .app { max-width: 100%; margin: 0 auto; padding: 8px; display: grid; gap: 8px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      backdrop-filter: blur(10px);
+    }
+    .chart-card { display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; }
+    .toolbar, .left-tools, .right-tools, .toggle-row, .legend, .selection-pills {
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    }
+    .toolbar { justify-content: space-between; }
+    .toggle-row { gap: 18px; color: var(--muted); font-size: 14px; padding: 0 2px 2px 2px; }
+    .toggle-row label {
+      display: inline-flex; align-items: center; gap: 8px; margin: 0;
+      font-size: 14px; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); cursor: pointer;
+    }
+    .toggle-row input[type="checkbox"] { width: auto; margin: 0; accent-color: #2563eb; }
+    .tab-btn, button {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 10px 14px;
+      background: #334155;
+      color: var(--text);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tab-btn.active { background: linear-gradient(180deg, #16a34a, #166534); }
+    button.primary { background: linear-gradient(180deg, #2563eb, #1d4ed8); }
+    button.ghost { background: rgba(255,255,255,0.04); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .pill, .legend-item, .selection-pill {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text);
+    }
+    .pill { padding: 8px 12px; font-size: 13px; }
+    .legend-item, .selection-pill { padding: 6px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; }
+    .selection-pill button {
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      font-size: 12px;
+    }
+    .chart-wrap {
+      position: relative;
+      min-height: 0;
+      border: 1px dashed rgba(255,255,255,0.10);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+    .swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+    .bottom-controls { display: grid; gap: 14px; }
+    .controls-grid { display: grid; grid-template-columns: 1fr 1fr auto auto auto; gap: 12px; align-items: end; }
+    .add-grid { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 12px; align-items: end; }
+    label {
+      display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+    }
+    input, select {
+      width: 100%; border-radius: 12px; border: 1px solid var(--border);
+      background: var(--panel-2); color: var(--text); padding: 11px 12px; font: inherit;
+    }
+    .status-text { min-height: 22px; color: var(--muted); }
+    .status-text.error { color: var(--danger); }
+    .status-text.ok { color: var(--ok); }
+    .tooltip {
+      position: absolute; pointer-events: none; background: rgba(2,6,23,0.96);
+      border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
+      font-size: 12px; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      opacity: 0; max-width: 340px; z-index: 20; line-height: 1.45; white-space: normal; word-break: break-word;
+    }
+    .empty {
+      display: grid; place-items: center; color: var(--muted); text-align: center;
+      padding: 24px; width: 100%; height: 100%;
+    }
+    .footer-note { font-size: 13px; color: var(--muted); line-height: 1.5; }
+    svg text { fill: #cbd5e1; font-size: 12px; }
+    .axis path, .axis line { stroke: rgba(255,255,255,0.15); }
+    .grid line { stroke: rgba(255,255,255,0.08); }
+    .grid path { stroke: none; }
+    @media (max-width: 1080px) { .controls-grid, .add-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 760px) {
+      .toolbar { align-items: stretch; }
+      .left-tools, .right-tools { width: 100%; }
+      .controls-grid, .add-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card chart-card">
+      <div class="toolbar">
+        <div class="left-tools">
+          <button class="tab-btn active" data-tab="elo">ELO History</button>
+          <button class="tab-btn" data-tab="classifiers">Classifiers + USPSA Ranking</button>
+        </div>
+        <div class="right-tools">
+          <div id="loadingState" class="pill">Idle</div>
+          <button id="shareBtn" class="ghost">Share view</button>
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <label><input id="showPeakToggle" type="checkbox" /> Show peak line</label>
+        <label><input id="showPredictionToggle" type="checkbox" /> Show 12-month prediction</label>
+        <label><input id="showClassifierScoresToggle" type="checkbox" checked /> Show classifier scores</label>
+      </div>
+
+      <div id="chartContainer" class="chart-wrap"></div>
+      <div id="legend" class="legend"></div>
+    </div>
+
+    <div class="card bottom-controls">
+      <div class="controls-grid">
+        <div>
+          <label for="startDate">Beginning date</label>
+          <input id="startDate" type="date" />
+        </div>
+        <div>
+          <label for="endDate">End date</label>
+          <input id="endDate" type="date" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="refreshBtn">Recalculate</button>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="clearDatesBtn" class="ghost">Clear dates</button>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="clearSelectionsBtn" class="ghost">Clear shooters</button>
+        </div>
+      </div>
+
+      <div class="add-grid">
+        <div>
+          <label for="shooterInput">Shooter</label>
+          <input id="shooterInput" type="text" placeholder="Type a shooter name" />
+        </div>
+        <div>
+          <label for="divisionSelect">Division</label>
+          <select id="divisionSelect"></select>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="addShooterBtn" class="primary">Add shooter</button>
+        </div>
+      </div>
+
+      <div id="statusText" class="status-text">Add up to 5 shooter/division selections.</div>
+      <div id="selectionPills" class="selection-pills"></div>
+
+      <div class="footer-note">
+        Peak lines are flat lines at the all-time peak value for that shooter/division metric, using full history and clipped by the visible date range.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "https://floral-snow-9556.wwscoggin.workers.dev";
+    const MAX_SELECTIONS = 5;
+
+    function formatDivisionLabel(value) {
+      return String(value || "").split("_").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+    }
+
+    function normalizeDisplayName(name) {
+      const trimmed = String(name || "").trim();
+      if (!trimmed) return trimmed;
+      return trimmed.split(/\s+/).map(part => part ? part.charAt(0).toUpperCase() + part.slice(1) : part).join(" ");
+    }
+
+    function formatSmartMonthYear(d, domain) {
+      const start = domain[0];
+      const end = domain[1];
+      const spanYears = (end - start) / (1000 * 60 * 60 * 24 * 365.25);
+      const month = d.getMonth();
+      const yearShort = d3.timeFormat("%y")(d);
+      const monthLabel = d3.timeFormat("%b")(d);
+
+      if (spanYears >= 2) {
+        if (![0, 3, 6, 9].includes(month)) return "";
+        return `${monthLabel} '${yearShort}`;
+      }
+      if (spanYears >= 1) {
+        if (![0, 2, 4, 6, 8, 10].includes(month)) return "";
+        return `${monthLabel} '${yearShort}`;
+      }
+      return `${monthLabel} '${yearShort}`;
+    }
+
+    function drawYearSeparators(svg, x, height, margin, dates) {
+      if (!dates || !dates.length) return;
+      const minDate = d3.min(dates);
+      const maxDate = d3.max(dates);
+      const years = d3.timeYear.range(
+        d3.timeYear.floor(minDate),
+        d3.timeYear.offset(d3.timeYear.ceil(maxDate), 1)
+      );
+
+      svg.append("g")
+        .selectAll("line.year-sep")
+        .data(years)
+        .join("line")
+        .attr("class", "year-sep")
+        .attr("x1", d => x(d))
+        .attr("x2", d => x(d))
+        .attr("y1", margin.top)
+        .attr("y2", height - margin.bottom)
+        .attr("stroke", "rgba(255,255,255,0.35)")
+        .attr("stroke-width", .5);
+    }
+
+    function normalizeDisplayName(name) {
+      const trimmed = String(name || "").trim();
+      if (!trimmed) return trimmed;
+      return trimmed
+        .split(/\s+/)
+        .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1) : part)
+        .join(" ");
+    }
+
+    const divisions = [
+      "carry_optics","limited","limited_10","limited_optics","open","pcc","production","revolver","single_stack"
+    ].sort((a, b) => formatDivisionLabel(a).localeCompare(formatDivisionLabel(b)));
+
+    const state = {
+      activeTab: "elo",
+      startDate: "",
+      endDate: "",
+      selections: [],
+      cache: new Map(),
+      chartHeight: null,
+      showPeak: false,
+      showPrediction: false,
+      showClassifierScores: true
+    };
+
+    const els = {
+      divisionSelect: document.getElementById("divisionSelect"),
+      startDate: document.getElementById("startDate"),
+      endDate: document.getElementById("endDate"),
+      shooterInput: document.getElementById("shooterInput"),
+      addShooterBtn: document.getElementById("addShooterBtn"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      clearDatesBtn: document.getElementById("clearDatesBtn"),
+      clearSelectionsBtn: document.getElementById("clearSelectionsBtn"),
+      shareBtn: document.getElementById("shareBtn"),
+      chartContainer: document.getElementById("chartContainer"),
+      statusText: document.getElementById("statusText"),
+      selectionPills: document.getElementById("selectionPills"),
+      loadingState: document.getElementById("loadingState"),
+      legend: document.getElementById("legend"),
+      showPeakToggle: document.getElementById("showPeakToggle"),
+      showPredictionToggle: document.getElementById("showPredictionToggle"),
+      showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle")
+    };
+
+    function initControls() {
+      divisions.forEach(div => {
+        const option = document.createElement("option");
+        option.value = div;
+        option.textContent = formatDivisionLabel(div);
+        els.divisionSelect.appendChild(option);
+      });
+      els.divisionSelect.value = "carry_optics";
+
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          state.activeTab = btn.dataset.tab;
+          document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
+          syncUrlState(true);
+          render();
+        });
+      });
+
+      els.startDate.addEventListener("change", () => { state.startDate = els.startDate.value; syncUrlState(true); render(); });
+      els.endDate.addEventListener("change", () => { state.endDate = els.endDate.value; syncUrlState(true); render(); });
+
+      els.refreshBtn.addEventListener("click", () => {
+        state.startDate = els.startDate.value;
+        state.endDate = els.endDate.value;
+        syncUrlState(true);
+        render();
+      });
+
+      els.clearDatesBtn.addEventListener("click", () => {
+        state.startDate = "";
+        state.endDate = "";
+        els.startDate.value = "";
+        els.endDate.value = "";
+        syncUrlState(true);
+        render();
+      });
+
+      els.clearSelectionsBtn.addEventListener("click", () => {
+        state.selections = [];
+        renderSelections();
+        syncUrlState(true);
+        render();
+        flashStatus("Cleared shooter selections.");
+      });
+
+      els.addShooterBtn.addEventListener("click", addShooterSelection);
+      els.shooterInput.addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addShooterSelection();
+        }
+      });
+
+      els.shareBtn.addEventListener("click", shareCurrentView);
+      els.showPeakToggle.addEventListener("change", () => { state.showPeak = els.showPeakToggle.checked; syncUrlState(true); render(); });
+      els.showPredictionToggle.addEventListener("change", () => { state.showPrediction = els.showPredictionToggle.checked; syncUrlState(true); render(); });
+      els.showClassifierScoresToggle.addEventListener("change", () => { state.showClassifierScores = els.showClassifierScoresToggle.checked; syncUrlState(true); render(); });
+
+      applyUrlState();
+      renderSelections();
+      initChartHeight();
+    }
+
+    function initChartHeight() {
+      if (state.chartHeight !== null) return;
+      const toolbarHeight = 110, legendHeight = 56, paddingAllowance = 110;
+      state.chartHeight = Math.max(420, window.innerHeight - toolbarHeight - legendHeight - paddingAllowance);
+      els.chartContainer.style.height = `${state.chartHeight}px`;
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText} for ${url}`);
+      return response.json();
+    }
+
+    function flashStatus(message, kind = "") {
+      els.statusText.textContent = message;
+      els.statusText.className = ["status-text", kind].filter(Boolean).join(" ");
+    }
+
+    function setLoading(isLoading, label) {
+      els.loadingState.textContent = label;
+      els.loadingState.style.background = isLoading ? "linear-gradient(180deg, #7c3aed, #5b21b6)" : "rgba(255,255,255,0.06)";
+      els.addShooterBtn.disabled = isLoading;
+    }
+
+    function normalizeDivision(value) {
+      return String(value || "").toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+    }
+
+    function findArrayDeep(value, preferredKeys = []) {
+      if (Array.isArray(value)) return value;
+      if (!value || typeof value !== "object") return [];
+      for (const key of preferredKeys) if (Array.isArray(value[key])) return value[key];
+      for (const nested of Object.values(value)) if (Array.isArray(nested)) return nested;
+      return [];
+    }
+
+    function parseDateValue(row) {
+      const keys = ["match_date","date","shot_date","event_date","timestamp","rated_at","created_at","last_match_date"];
+      for (const key of keys) {
+        if (row && row[key]) {
+          const d = new Date(row[key]);
+          if (!Number.isNaN(d.getTime())) return d;
+        }
+      }
+      return null;
+    }
+
+    function pickNumber(row, candidates) {
+      for (const key of candidates) {
+        const n = Number(row?.[key]);
+        if (!Number.isNaN(n)) return n;
+      }
+      return null;
+    }
+
+    function fuzzyScore(query, candidate) {
+      const q = query.toLowerCase();
+      const c = candidate.toLowerCase();
+      if (q === c) return 100;
+      if (c.startsWith(q)) return 90;
+      if (c.includes(q)) return 75;
+      return q.split(/\s+/).filter(part => c.includes(part)).length * 10;
+    }
+
+    function pickBestShooter(query, results) {
+      if (!Array.isArray(results) || !results.length) return null;
+      return [...results].sort((a, b) => {
+        const aName = a.name || a.shooter_name || "";
+        const bName = b.name || b.shooter_name || "";
+        return fuzzyScore(query, bName) - fuzzyScore(query, aName);
+      })[0];
+    }
+
+    function parseEloHistory(payload, shooterMeta, division) {
+      const history = findArrayDeep(payload, ["history"]);
+      const targetDivision = normalizeDivision(division);
+      return history.map((row, idx) => ({
+        shooterId: shooterMeta.id,
+        shooterName: shooterMeta.name,
+        division: normalizeDivision(row.division || division),
+        date: parseDateValue(row),
+        rating: pickNumber(row, ["rating_after","display_rating","rating"]),
+        ratingBefore: pickNumber(row, ["rating_before"]),
+        sigma: pickNumber(row, ["sigma_after","sigma_before","sigma"]),
+        matchPct: pickNumber(row, ["match_pct"]),
+        matchName: row.match_name || "",
+        idx
+      })).filter(d => d.date && d.rating !== null && d.division === targetDivision)
+        .sort((a, b) => a.date - b.date || a.idx - b.idx);
+    }
+
+    function parseClassifiers(payload, shooterMeta, division) {
+      const rows = findArrayDeep(payload, ["classifiers","scores","history","items"]);
+      const targetDivision = normalizeDivision(division);
+      return rows.map((row, idx) => ({
+        shooterId: shooterMeta.id,
+        shooterName: shooterMeta.name,
+        division: normalizeDivision(row.division || division),
+        date: parseDateValue(row),
+        hhfPct: pickNumber(row, ["hhf_pct","hhfPercent","percentage","pct"]),
+        code: String(row.code || row.classifier_code || row.classifier || row.stage_code || row.name || `classifier_${idx}`),
+        classifierName: row.classifier_name || row.name || row.title || "",
+        matchName: row.match_name || row.event_name || "",
+        idx
+      })).filter(d => d.date && d.hhfPct !== null && d.division === targetDivision)
+        .sort((a, b) => a.date - b.date || a.idx - b.idx);
+    }
+
+    function filterByDate(rows) {
+      const start = state.startDate ? new Date(`${state.startDate}T00:00:00`) : null;
+      const end = state.endDate ? new Date(`${state.endDate}T23:59:59`) : null;
+      return rows.filter(row => (!start || row.date >= start) && (!end || row.date <= end));
+    }
+
+    function computeRollingRankings(classifiers) {
+      const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
+      const latestByCode = new Map();
+      const points = [];
+      for (const row of sorted) {
+        latestByCode.set(row.code, row);
+        const valid = [...latestByCode.values()].sort((a, b) => b.date - a.date || b.idx - a.idx);
+        const lastEight = valid.slice(0, 8);
+        const bestSix = [...lastEight].sort((a, b) => b.hhfPct - a.hhfPct).slice(0, 6);
+        const average = bestSix.length >= 4 ? bestSix.reduce((sum, item) => sum + item.hhfPct, 0) / bestSix.length : null;
+        points.push({ shooterId: row.shooterId, shooterName: row.shooterName, division: row.division, date: row.date, ranking: average });
+      }
+      return points.filter(d => d.ranking !== null);
+    }
+
+    function getPeakLevel(values, valueKey) {
+      if (!values.length) return null;
+      return d3.max(values, d => d[valueKey]);
+    }
+
+    function buildFlatPeakLine(values, valueKey) {
+      if (!values.length) return [];
+      const peak = getPeakLevel(values, valueKey);
+      return peak === null ? [] : values.map(d => ({ date: d.date, value: peak }));
+    }
+
+    function linearRegressionPrediction(values, valueKey, monthsForward = 12) {
+      const filtered = values.filter(d => d.date && Number.isFinite(d[valueKey]));
+      if (filtered.length < 2) return [];
+      const xs = filtered.map(d => d.date.getTime());
+      const ys = filtered.map(d => d[valueKey]);
+      const xMean = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const yMean = ys.reduce((a, b) => a + b, 0) / ys.length;
+      let numerator = 0, denominator = 0;
+      for (let i = 0; i < xs.length; i++) {
+        numerator += (xs[i] - xMean) * (ys[i] - yMean);
+        denominator += (xs[i] - xMean) ** 2;
+      }
+      if (denominator === 0) return [];
+      const slope = numerator / denominator;
+      const intercept = yMean - slope * xMean;
+      const lastDate = filtered[filtered.length - 1].date;
+      const projectedDate = new Date(lastDate);
+      projectedDate.setMonth(projectedDate.getMonth() + monthsForward);
+      return [
+        { date: lastDate, value: slope * lastDate.getTime() + intercept },
+        { date: projectedDate, value: slope * projectedDate.getTime() + intercept }
+      ];
+    }
+
+    async function resolveShooter(query) {
+      const result = await fetchJson(`${API_BASE}/v1/shooters?q=${encodeURIComponent(query)}`);
+      const candidates = Array.isArray(result) ? result : findArrayDeep(result, ["items","shooters","results"]);
+      const match = pickBestShooter(query, candidates);
+      if (!match) throw new Error(`No shooter found for "${query}"`);
+
+      const derivedName = (
+        match.name ||
+        match.shooter_name ||
+        match.full_name ||
+        match.display_name ||
+        [match.first_name, match.last_name].filter(Boolean).join(" ").trim() ||
+        [match.firstname, match.lastname].filter(Boolean).join(" ").trim() ||
+        query
+      );
+
+      return {
+        id: match.id || match.identifier || match.shooter_id || match.identity_id,
+        name: derivedName,
+        memberNumber: match.member_number || match.memberNumber || match.uspsa_number || ""
+      };
+    }
+
+    async function loadShooterDivisionBundle(selection) {
+      const key = `${selection.id}:${selection.division}`;
+      if (state.cache.has(key)) return state.cache.get(key);
+      const [eloPayload, classifierPayload] = await Promise.all([
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`)
+      ]);
+      const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
+      const bundle = {
+        ...selection,
+        division: normalizeDivision(selection.division),
+        eloHistory: parseEloHistory(eloPayload, selection, selection.division),
+        classifiers: fullClassifierHistory,
+        rankingHistory: computeRollingRankings(fullClassifierHistory)
+      };
+      state.cache.set(key, bundle);
+      return bundle;
+    }
+
+    async function addShooterSelection() {
+      const query = els.shooterInput.value.trim();
+      const division = normalizeDivision(els.divisionSelect.value);
+      if (!query) return flashStatus("Enter a shooter name.", "error");
+      if (state.selections.length >= MAX_SELECTIONS) return flashStatus("Maximum 5 shooter/division selections.", "error");
+
+      setLoading(true, "Resolving shooter...");
+      flashStatus("Resolving shooter and loading selected division...");
+      try {
+        const shooter = await resolveShooter(query);
+        const duplicate = state.selections.find(sel => String(sel.id) === String(shooter.id) && sel.division === division);
+        if (duplicate) return flashStatus("That shooter/division pair is already loaded.", "error");
+
+        const selection = {
+          id: shooter.id,
+          name: shooter.name,
+          memberNumber: shooter.memberNumber,
+          division
+        };
+        const bundle = await loadShooterDivisionBundle(selection);
+        state.selections.push(bundle);
+        els.shooterInput.value = "";
+        renderSelections();
+        syncUrlState(true);
+        render();
+        flashStatus(`Added ${normalizeDisplayName(bundle.name)} · ${formatDivisionLabel(bundle.division)}.`, "ok");
+      } catch (error) {
+        console.error(error);
+        flashStatus(String(error.message || error), "error");
+      } finally {
+        setLoading(false, "Loaded");
+      }
+    }
+
+    function removeSelection(index) {
+      state.selections.splice(index, 1);
+      renderSelections();
+      syncUrlState(true);
+      render();
+    }
+
+    function renderSelections() {
+      els.selectionPills.innerHTML = "";
+      state.selections.forEach((sel, index) => {
+        const pill = document.createElement("div");
+        pill.className = "selection-pill";
+        pill.innerHTML = `<span>${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)}${sel.memberNumber ? ` · ${sel.memberNumber}` : ""}</span>`;
+        const btn = document.createElement("button");
+        btn.textContent = "Remove";
+        btn.addEventListener("click", () => removeSelection(index));
+        pill.appendChild(btn);
+        els.selectionPills.appendChild(pill);
+      });
+    }
+
+    function buildShareUrl() {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", state.activeTab);
+      if (state.startDate) url.searchParams.set("start", state.startDate); else url.searchParams.delete("start");
+      if (state.endDate) url.searchParams.set("end", state.endDate); else url.searchParams.delete("end");
+      if (state.showPeak) url.searchParams.set("peak", "1"); else url.searchParams.delete("peak");
+      if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
+      if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
+      if (state.selections.length) {
+        const value = state.selections.map(sel => [
+          encodeURIComponent(sel.name),
+          encodeURIComponent(sel.division),
+          encodeURIComponent(String(sel.id || ""))
+        ].join("~")).join("|");
+        url.searchParams.set("pairs", value);
+      } else {
+        url.searchParams.delete("pairs");
+      }
+      return url.toString();
+    }
+
+    function syncUrlState(replace = true) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", buildShareUrl());
+    }
+
+    async function shareCurrentView() {
+      const url = buildShareUrl();
+      try {
+        if (navigator.share) {
+          await navigator.share({ title: "Hitfactor Visualizer", url });
+        } else if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          flashStatus("Share URL copied to clipboard.", "ok");
+        } else {
+          window.prompt("Copy this URL", url);
+        }
+      } catch (err) {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          flashStatus("Share URL copied to clipboard.", "ok");
+        }
+      }
+    }
+
+    function applyUrlState() {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab");
+      const start = params.get("start");
+      const end = params.get("end");
+      const pairs = params.get("pairs");
+      const peak = params.get("peak");
+      const predict = params.get("predict");
+      const classifiers = params.get("classifiers");
+      if (tab === "elo" || tab === "classifiers") state.activeTab = tab;
+      if (start) state.startDate = start;
+      if (end) state.endDate = end;
+      state.showPeak = peak === "1";
+      state.showPrediction = predict === "1";
+      state.showClassifierScores = classifiers !== "0";
+      els.startDate.value = state.startDate;
+      els.endDate.value = state.endDate;
+      els.showPeakToggle.checked = state.showPeak;
+      els.showPredictionToggle.checked = state.showPrediction;
+      els.showClassifierScoresToggle.checked = state.showClassifierScores;
+      document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === state.activeTab));
+      if (pairs) {
+        state.selections = pairs.split("|").map(part => {
+          const [name, division, id] = part.split("~").map(v => decodeURIComponent(v || ""));
+          return { name, division: normalizeDivision(division), id: id ? Number(id) || id : null };
+        }).filter(sel => sel.name && sel.division).slice(0, MAX_SELECTIONS);
+      }
+    }
+
+    function clearChart() {
+      els.chartContainer.innerHTML = "";
+      els.legend.innerHTML = "";
+      els.chartContainer.style.height = `${state.chartHeight}px`;
+    }
+
+    function getColorScale() {
+      const preferred = [
+        "#22c55e",
+        "#ef4444",
+        ...d3.schemeTableau10.filter(c => c.toLowerCase() !== "#e15759" && c.toLowerCase() !== "#59a14f"),
+        ...d3.schemeSet3
+      ];
+      return d3.scaleOrdinal()
+        .domain(state.selections.map(d => `${d.name} · ${d.division}`))
+        .range(preferred);
+    }
+
+    function buildSvg() {
+      const width = els.chartContainer.clientWidth || window.innerWidth - 32;
+      const height = state.chartHeight || Math.max(420, window.innerHeight - 220);
+      const margin = { top: 20, right: 40, bottom: 60, left: 68 };
+      const svg = d3.create("svg")
+        .attr("viewBox", `0 0 ${width} ${height}`)
+        .style("width", "100%")
+        .style("height", `${height}px`);
+      return { svg, width, height, margin };
+    }
+
+    function renderLegend(color) {
+      els.legend.innerHTML = "";
+      state.selections.forEach(sel => {
+        const key = `${normalizeDisplayName(sel.name)} · ${sel.division}`;
+        const item = document.createElement("div");
+        item.className = "legend-item";
+        item.innerHTML = `<span class="swatch" style="background:${color(key)}"></span><span>${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)}</span>`;
+        els.legend.appendChild(item);
+      });
+    }
+
+    function getTooltip() {
+      let tooltip = els.chartContainer.querySelector(".tooltip");
+      if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.className = "tooltip";
+        els.chartContainer.appendChild(tooltip);
+      }
+      return tooltip;
+    }
+
+    function showEmpty(message) {
+      clearChart();
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = message;
+      els.chartContainer.appendChild(empty);
+    }
+
+    function positionTooltip(event, tooltip) {
+      const containerRect = els.chartContainer.getBoundingClientRect();
+      const pad = 12;
+      tooltip.style.opacity = 1;
+      tooltip.style.left = "0px";
+      tooltip.style.top = "0px";
+      const ttRect = tooltip.getBoundingClientRect();
+      let left = event.clientX - containerRect.left + 14;
+      let top = event.clientY - containerRect.top - ttRect.height - 14;
+      if (left + ttRect.width + pad > containerRect.width) left = event.clientX - containerRect.left - ttRect.width - 14;
+      if (left < pad) left = pad;
+      if (top < pad) top = event.clientY - containerRect.top + 14;
+      if (top + ttRect.height + pad > containerRect.height) top = Math.max(pad, containerRect.height - ttRect.height - pad);
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    function drawPeakLine(svg, data, x, y, color) {
+      if (!data.length) return;
+      const line = d3.line().x(d => x(d.date)).y(d => y(d.value));
+      svg.append("path")
+        .datum(data)
+        .attr("fill", "none")
+        .attr("stroke", color)
+        .attr("stroke-width", 1)
+        .attr("opacity", 0.9)
+        .attr("d", line);
+    }
+
+    function drawPredictionLine(svg, data, x, y, color) {
+      if (data.length < 2) return;
+      const line = d3.line().x(d => x(d.date)).y(d => y(d.value));
+      svg.append("path")
+        .datum(data)
+        .attr("fill", "none")
+        .attr("stroke", color)
+        .attr("stroke-width", 1.75)
+        .attr("stroke-dasharray", "3 5")
+        .attr("opacity", 0.9)
+        .attr("d", line);
+    }
+
+    function drawEloTab() {
+      const color = getColorScale();
+      const series = state.selections.map(sel => {
+        const fullValues = sel.eloHistory || [];
+        const visibleValues = filterByDate(fullValues);
+        const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullValues, "rating")) : [];
+        const predictionValues = state.showPrediction ? linearRegressionPrediction(visibleValues, "rating", 12) : [];
+        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, values: visibleValues, peakValues, predictionValues };
+      }).filter(d => d.values.length);
+
+      if (!series.length) return showEmpty("No ELO history available for the selected shooter/division/date combinations.");
+
+      clearChart();
+      renderLegend(color);
+      const tooltip = getTooltip();
+      const { svg, width, height, margin } = buildSvg();
+
+      const allDates = series.flatMap(s => [...s.values.map(d => d.date), ...s.peakValues.map(d => d.date), ...s.predictionValues.map(d => d.date)]);
+      const allYValues = series.flatMap(s => [...s.values.map(d => d.rating), ...s.peakValues.map(d => d.value), ...s.predictionValues.map(d => d.value)]).filter(Number.isFinite);
+
+      const xDomain = d3.extent(allDates);
+      const x = d3.scaleTime().domain(xDomain).range([margin.left, width - margin.right]);
+      const y = d3.scaleLinear().domain(d3.extent(allYValues)).nice().range([height - margin.bottom, margin.top]);
+      drawYearSeparators(svg, x, height, margin, allDates);
+
+      svg.append("g").attr("class", "grid").attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
+      svg.append("g").attr("class", "grid").attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(() => ""));
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
+      svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y).ticks(6));
+      svg.append("text").attr("x", width / 2).attr("y", height - 18).attr("text-anchor", "middle").text("Date");
+      svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
+
+      const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
+
+      series.forEach(serie => {
+        svg.append("path").datum(serie.values).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", 2.5).attr("d", valueLine);
+        if (state.showPeak) drawPeakLine(svg, serie.peakValues, x, y, color(serie.key));
+        if (state.showPrediction) drawPredictionLine(svg, serie.predictionValues, x, y, color(serie.key));
+        svg.append("g").selectAll("circle").data(serie.values).join("circle")
+          .attr("cx", d => x(d.date)).attr("cy", d => y(d.rating)).attr("r", 3.25).attr("fill", color(serie.key))
+          .on("mousemove", (event, d) => {
+            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Rating after: ${d.rating.toFixed(2)}${d.ratingBefore !== null ? `<br>Rating before: ${d.ratingBefore.toFixed(2)}` : ""}${d.matchPct !== null ? `<br>Match %: ${d.matchPct.toFixed(2)}` : ""}${d.matchName ? `<br>${d.matchName}` : ""}`;
+            positionTooltip(event, tooltip);
+          })
+          .on("mouseleave", () => tooltip.style.opacity = 0);
+      });
+
+      els.chartContainer.appendChild(svg.node());
+    }
+
+    function drawClassifierTab() {
+      const color = getColorScale();
+      const series = state.selections.map(sel => {
+        const fullRankings = sel.rankingHistory || [];
+        const visibleClassifiers = filterByDate(sel.classifiers || []);
+        const visibleRankings = filterByDate(fullRankings);
+        const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullRankings, "ranking")) : [];
+        const predictionValues = state.showPrediction ? linearRegressionPrediction(visibleRankings, "ranking", 12) : [];
+        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
+      }).filter(d => d.classifiers.length || d.rankings.length);
+
+      if (!series.length) return showEmpty("No classifier data available for the selected shooter/division/date combinations.");
+
+      clearChart();
+      renderLegend(color);
+      const tooltip = getTooltip();
+      const { svg, width, height, margin } = buildSvg();
+
+      const allDates = series.flatMap(s => [...s.classifiers.map(d => d.date), ...s.rankings.map(d => d.date), ...s.peakValues.map(d => d.date), ...s.predictionValues.map(d => d.date)]);
+      const allValues = series.flatMap(s => [...s.classifiers.map(d => d.hhfPct), ...s.rankings.map(d => d.ranking), ...s.peakValues.map(d => d.value), ...s.predictionValues.map(d => d.value)]).filter(Number.isFinite);
+
+      const xDomain = d3.extent(allDates);
+      const x = d3.scaleTime().domain(xDomain).range([margin.left, width - margin.right]);
+      const y = d3.scaleLinear().domain([Math.max(0, d3.min(allValues) - 5), Math.min(120, d3.max(allValues) + 5)]).nice().range([height - margin.bottom, margin.top]);
+      drawYearSeparators(svg, x, height, margin, allDates);
+
+      svg.append("g").attr("class", "grid").attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
+      svg.append("g").attr("class", "grid").attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(() => ""));
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
+      svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y).ticks(6).tickFormat(d => `${d}%`));
+      svg.append("text").attr("x", width / 2).attr("y", height - 18).attr("text-anchor", "middle").text("Date");
+      svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
+
+      const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(d.ranking));
+
+      series.forEach(serie => {
+        svg.append("path").datum(serie.rankings).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", 2.5).attr("d", rankLine);
+        if (state.showPeak) drawPeakLine(svg, serie.peakValues, x, y, color(serie.key));
+        if (state.showPrediction) drawPredictionLine(svg, serie.predictionValues, x, y, color(serie.key));
+
+        if (state.showClassifierScores) {
+          svg.append("g").selectAll("circle.classifier").data(serie.classifiers).join("circle")
+            .attr("cx", d => x(d.date)).attr("cy", d => y(d.hhfPct)).attr("r", 4).attr("fill", color(serie.key)).attr("opacity", 0.72)
+            .on("mousemove", (event, d) => {
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}`;
+              positionTooltip(event, tooltip);
+            })
+            .on("mouseleave", () => tooltip.style.opacity = 0);
+        }
+
+        svg.append("g").selectAll("circle.rank").data(serie.rankings).join("circle")
+          .attr("cx", d => x(d.date)).attr("cy", d => y(d.ranking)).attr("r", 2.6).attr("fill", color(serie.key))
+          .on("mousemove", (event, d) => {
+            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Calculated ranking: ${d.ranking.toFixed(2)}%`;
+            positionTooltip(event, tooltip);
+          })
+          .on("mouseleave", () => tooltip.style.opacity = 0);
+      });
+
+      els.chartContainer.appendChild(svg.node());
+    }
+
+    function render() {
+      els.chartContainer.style.height = `${state.chartHeight}px`;
+      if (!state.selections.length) return showEmpty("Add at least one shooter/division pair to begin.");
+      if (state.activeTab === "elo") drawEloTab();
+      if (state.activeTab === "classifiers") drawClassifierTab();
+    }
+
+    async function hydrateSharedSelections() {
+      if (!state.selections.length) return;
+      const hydrated = [];
+      setLoading(true, "Loading shared view...");
+      try {
+        for (const selection of state.selections) {
+          let resolvedSelection = selection;
+          if (selection.id) {
+            const refreshed = await resolveShooter(selection.name);
+            resolvedSelection = {
+              ...selection,
+              id: selection.id,
+              name: refreshed.name,
+              memberNumber: refreshed.memberNumber
+            };
+          } else {
+            const shooter = await resolveShooter(selection.name);
+            resolvedSelection = { ...selection, ...shooter, division: selection.division };
+          }
+          const bundle = await loadShooterDivisionBundle(resolvedSelection);
+          hydrated.push(bundle);
+        }
+        state.selections = hydrated;
+        renderSelections();
+        render();
+      } catch (error) {
+        console.error(error);
+        flashStatus(String(error.message || error), "error");
+      } finally {
+        setLoading(false, "Loaded");
+      }
+    }
+
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(render, 80);
+    });
+
+    initControls();
+    render();
+    hydrateSharedSelections();
+  </script>
+</body>
+</html>
