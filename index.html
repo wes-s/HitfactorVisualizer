@@ -1045,7 +1045,7 @@
       if (state.showPeak) url.searchParams.set("peak", "1"); else url.searchParams.delete("peak");
       if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
       if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
-      if (!state.showWhatIf) url.searchParams.set("whatif", "0"); else url.searchParams.delete("whatif");
+      if (state.showWhatIf) url.searchParams.set("whatif", "1"); else url.searchParams.set("whatif", "0");
       if (state.focusedSeries) url.searchParams.set("focus", encodeURIComponent(state.focusedSeries)); else url.searchParams.delete("focus");
       if (state.targetClassifierCount !== 4) url.searchParams.set("targetn", String(state.targetClassifierCount)); else url.searchParams.delete("targetn");
       if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
