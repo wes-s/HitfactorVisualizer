@@ -711,18 +711,24 @@
       ) || null;
     }
 
-    function requiredAverageForNextClass(classifiers, rankingHistory, nToAdd = 4) {
+    function requiredAverageForNextClass(sel, nToAdd = 4) {
+      const classifiers = sel.classifiers || [];
+      const rankingHistory = sel.rankingHistory || [];
       const currentState = computeCurrentBestSixWindow(classifiers);
       const current = currentState.currentRanking;
       const peakRanking = (rankingHistory && rankingHistory.length) ? d3.max(rankingHistory, d => d.ranking) : current;
       const peakClass = getCurrentClassification(peakRanking);
       const currentPctClass = getCurrentClassification(current);
-      const next = getNextClassificationThresholdFromClass(peakClass || "U");
+
+      const officialCurrentClass = sel.currentClassification || null;
+      const baseClass = officialCurrentClass || currentPctClass || "U";
+      const next = getNextClassificationThresholdFromClass(baseClass);
 
       if (!next) {
         return {
           currentRanking: current,
           currentPctClass,
+          currentOfficialClass: officialCurrentClass,
           peakRanking,
           peakClass,
           nextClass: null,
@@ -730,7 +736,7 @@
         };
       }
 
-      const baseScores = currentState.bestSix.map(d => d.hhfPct).sort((a, b) => b - a);
+      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
       const n = Math.max(1, Number(nToAdd) || 1);
 
       let lo = 0;
@@ -739,7 +745,7 @@
 
       for (let i = 0; i < 40; i++) {
         const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(mid)).sort((a, b) => b - a).slice(0, 6);
+        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
         const avg = d3.mean(combined);
         if (avg >= next.threshold) {
           feasible = true;
@@ -752,6 +758,7 @@
       return {
         currentRanking: current,
         currentPctClass,
+        currentOfficialClass: officialCurrentClass,
         peakRanking,
         peakClass,
         nextClass: next.label,
@@ -942,17 +949,21 @@
     async function loadShooterDivisionBundle(selection) {
       const key = `${selection.id}:${selection.division}`;
       if (state.cache.has(key)) return state.cache.get(key);
-      const [eloPayload, classifierPayload] = await Promise.all([
+      const [eloPayload, classifierPayload, matchPayload] = await Promise.all([
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`)
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches?limit=1`)
       ]);
       const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
+      const latestMatch = findArrayDeep(matchPayload, ["data"])[0] || null;
+      const currentClassification = latestMatch?.classification || null;
       const bundle = {
         ...selection,
         division: normalizeDivision(selection.division),
         eloHistory: parseEloHistory(eloPayload, selection, selection.division),
         classifiers: fullClassifierHistory,
-        rankingHistory: computeRollingRankings(fullClassifierHistory)
+        rankingHistory: computeRollingRankings(fullClassifierHistory),
+        currentClassification
       };
       state.cache.set(key, bundle);
       return bundle;
@@ -1340,7 +1351,7 @@
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
       const targetNotes = state.selections.map(sel => ({
         key: seriesKey(sel),
-        note: requiredAverageForNextClass(sel.classifiers || [], sel.rankingHistory || [], state.targetClassifierCount)
+        note: requiredAverageForNextClass(sel, state.targetClassifierCount)
       }));
 
       series.forEach(serie => {
@@ -1477,9 +1488,9 @@
           if (!entry.note.nextClass) {
             box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "N/A"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Already at top class.`;
           } else if (entry.note.requiredAverage == null) {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
+            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
           } else {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
+            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
           }
           targetContainer.appendChild(box);
         });
