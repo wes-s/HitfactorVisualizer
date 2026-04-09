@@ -952,11 +952,21 @@
       const [eloPayload, classifierPayload, matchPayload] = await Promise.all([
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches?limit=1`)
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches`)
       ]);
       const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
-      const latestMatch = findArrayDeep(matchPayload, ["data"])[0] || null;
-      const currentClassification = latestMatch?.classification || null;
+
+      const matchHistory = findArrayDeep(matchPayload, ["data"])
+        .map(row => ({
+          ...row,
+          division: normalizeDivision(row.division),
+          matchDate: row.match_date ? new Date(row.match_date) : null
+        }))
+        .filter(row => row.matchDate && row.division === normalizeDivision(selection.division))
+        .sort((a, b) => b.matchDate - a.matchDate);
+
+      const latestDivisionMatch = matchHistory[0] || null;
+      const currentClassification = latestDivisionMatch?.classification || null;
       const bundle = {
         ...selection,
         division: normalizeDivision(selection.division),
