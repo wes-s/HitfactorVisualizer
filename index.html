@@ -35,10 +35,11 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.25);
       backdrop-filter: blur(10px);
     }
-    .chart-card { display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; min-height: calc(100vh - 16px); }
+    .chart-card { display: grid; grid-template-rows: auto auto auto 1fr auto; gap: 10px; min-height: calc(100vh - 16px); }
     .toolbar, .left-tools, .right-tools, .toggle-row, .legend, .selection-pills {
       display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
     }
+    .legend { grid-row: 5; }
     .toolbar { justify-content: space-between; }
     .toggle-row { gap: 18px; color: var(--muted); font-size: 14px; padding: 0 2px 2px 2px; }
     .toggle-row label {
@@ -80,6 +81,7 @@
       border: 1px dashed rgba(255,255,255,0.10);
       border-radius: 18px;
       overflow: hidden;
+      grid-row: 4;
     }
     .swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
     .bottom-controls { display: grid; gap: 14px; margin-top: 8px; }
@@ -135,18 +137,19 @@
       .left-tools, .right-tools { width: 100%; }
       .controls-grid, .add-grid { grid-template-columns: 1fr; }
       .card { padding: 10px; border-radius: 14px; }
-      .chart-card { min-height: calc(100vh - 12px); gap: 8px; }
+      .chart-card { grid-template-rows: auto auto auto 1fr auto; min-height: auto; gap: 8px; }
       .tab-btn, button { padding: 9px 12px; font-size: 14px; }
       .toggle-row {
-        gap: 10px;
-        overflow-x: auto;
-        flex-wrap: nowrap;
-        padding-bottom: 4px;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 12px;
+        align-items: center;
       }
-      .toggle-row::-webkit-scrollbar { display: none; }
-      .toggle-row label { white-space: nowrap; }
+      .toggle-row label {
+        white-space: normal;
+        min-width: 0;
+        font-size: 13px;
+      }
       .legend {
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -167,7 +170,8 @@
       .tooltip { max-width: min(300px, calc(100vw - 28px)); font-size: 11px; }
       .whatif-panel { padding: 8px 10px; }
       .whatif-panel-content { grid-template-columns: 1fr; }
-      .whatif-card { font-size: 11px; }
+      .whatif-panel { order: 2; }
+      .whatif-card { font-size: 11px; width: 100%; }
     }
   </style>
 </head>
@@ -192,11 +196,11 @@
         <label><input id="showWhatIfToggle" type="checkbox" /> Show What-if</label>
       </div>
 
+      <div id="whatIfPanel" class="whatif-panel" style="display:none;"></div>
+
       <div id="chartContainer" class="chart-wrap"></div>
       <div id="legend" class="legend"></div>
     </div>
-
-    <div id="whatIfPanel" class="card whatif-panel" style="display:none;"></div>
 
     <div class="card bottom-controls">
       <div class="controls-grid">
@@ -287,6 +291,33 @@
         return `${monthLabel} '${yearShort}`;
       }
       return `${monthLabel} '${yearShort}`;
+    }
+
+    function getBottomAxisInterval() {
+      if (window.innerWidth <= 480) return d3.timeMonth.every(4);
+      if (window.innerWidth <= 760) return d3.timeMonth.every(3);
+      return d3.timeMonth.every(1);
+    }
+
+    function formatMobileMonthYear(d) {
+      return d3.timeFormat("%b '%y")(d);
+    }
+
+    function applyBottomAxis(g, x, xDomain) {
+      const isMobile = window.innerWidth <= 760;
+      g.call(
+        d3.axisBottom(x)
+          .ticks(getBottomAxisInterval())
+          .tickFormat(d => isMobile ? formatMobileMonthYear(d) : formatSmartMonthYear(d, xDomain))
+      );
+
+      if (isMobile) {
+        g.selectAll("text")
+          .style("text-anchor", "end")
+          .attr("dx", "-0.35em")
+          .attr("dy", "0.45em")
+          .attr("transform", "rotate(-35)");
+      }
     }
 
     function drawYearSeparators(svg, x, height, margin, dates) {
@@ -1182,7 +1213,7 @@
       const height = state.chartHeight || Math.max(420, window.innerHeight - 32);
       const isMobile = window.innerWidth <= 760;
       const margin = isMobile
-        ? { top: 12, right: 34, bottom: 42, left: 44 }
+        ? { top: 12, right: 32, bottom: 66, left: 42 }
         : { top: 20, right: 64, bottom: 60, left: 68 };
       const svg = d3.create("svg")
         .attr("viewBox", `0 0 ${width} ${height}`)
@@ -1367,14 +1398,14 @@
       drawYearSeparators(svg, x, height, margin, allDates);
 
       svg.append("g").attr("class", "grid").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
+        .call(d3.axisBottom(x).ticks(getBottomAxisInterval()).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
       svg.append("g").attr("class", "grid").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(() => ""));
       svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
+        .call(g => applyBottomAxis(g, x, xDomain));
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6));
-      svg.append("text").attr("x", width / 2).attr("y", height - 18).attr("text-anchor", "middle").text("Date");
+      svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
 
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
@@ -1431,15 +1462,15 @@
       drawClassLines(svg, y, width, margin);
 
       svg.append("g").attr("class", "grid").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
+        .call(d3.axisBottom(x).ticks(getBottomAxisInterval()).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
       svg.append("g").attr("class", "grid").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(() => ""));
       svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
+        .call(g => applyBottomAxis(g, x, xDomain));
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickFormat(d => `${d}%`));
       drawRightClassAxis(svg, y, width, margin);
-      svg.append("text").attr("x", width / 2).attr("y", height - 18).attr("text-anchor", "middle").text("Date");
+      svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
 
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
@@ -1553,52 +1584,16 @@
       });
 
 
-      els.chartContainer.querySelectorAll(".whatif-container").forEach(el => el.remove());
-
-      let targetContainer = null;
-      if (state.showWhatIf) {
-        targetContainer = document.createElement("div");
-        targetContainer.className = "whatif-container";
-        targetContainer.style.position = "absolute";
-        targetContainer.style.right = "12px";
-        targetContainer.style.top = "12px";
-        targetContainer.style.maxWidth = "360px";
-        targetContainer.style.display = "grid";
-        targetContainer.style.gap = "6px";
-        targetContainer.style.zIndex = "20";
-        targetContainer.style.pointerEvents = "auto";
-
-        targetNotes.forEach(entry => {
-          if (!entry.note) return;
-          const colorValue = color(entry.key);
-          const box = document.createElement("div");
-          box.style.background = "rgba(2,6,23,0.88)";
-          box.style.border = `1px solid ${colorValue}`;
-          box.style.borderRadius = "10px";
-          box.style.padding = "8px 10px";
-          box.style.fontSize = "12px";
-          box.style.lineHeight = "1.35";
-
-          if (!entry.note.nextClass) {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "N/A"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Already at top class.`;
-          } else if (entry.note.requiredAverage == null) {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
-          } else {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
-          }
-          targetContainer.appendChild(box);
-        });
-      }
-
       els.chartContainer.appendChild(svg.node());
-
-      if (targetContainer && targetContainer.children.length) {
-        els.chartContainer.appendChild(targetContainer);
-      }
+      renderWhatIfPanel(targetNotes, color);
     }
 
     function render() {
       els.chartContainer.style.height = `${state.chartHeight}px`;
+      if (els.whatIfPanel && state.activeTab !== "classifiers") {
+        els.whatIfPanel.style.display = "none";
+        els.whatIfPanel.innerHTML = "";
+      }
       if (!state.selections.length) return showEmpty("Add at least one shooter/division pair to begin.");
       if (state.activeTab === "elo") drawEloTab();
       if (state.activeTab === "classifiers") drawClassifierTab();
