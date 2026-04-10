@@ -133,10 +133,11 @@
     .grid path { stroke: none; }
     @media (max-width: 1080px) { .controls-grid, .add-grid { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 760px) {
+      .app { padding: 4px; gap: 4px; }
       .toolbar { align-items: stretch; }
       .left-tools, .right-tools { width: 100%; }
       .controls-grid, .add-grid { grid-template-columns: 1fr; }
-      .card { padding: 10px; border-radius: 14px; }
+      .card { padding: 8px; border-radius: 14px; }
       .chart-card { grid-template-rows: auto auto auto 1fr auto; min-height: auto; gap: 8px; }
       .tab-btn, button { padding: 9px 12px; font-size: 14px; }
       .toggle-row {
@@ -172,6 +173,7 @@
       .whatif-panel-content { grid-template-columns: 1fr; }
       .whatif-panel { order: 2; }
       .whatif-card { font-size: 11px; width: 100%; }
+      .chart-wrap { margin-left: -2px; margin-right: -2px; }
     }
   </style>
 </head>
@@ -548,10 +550,10 @@
       });
       applyUrlState();
       renderSelections();
-      initChartHeight();
+      initChartHeight(true);
     }
 
-    function initChartHeight() {
+    function initChartHeight(force = false) {
       const chartCard = document.querySelector(".chart-card");
       const chartCardRect = chartCard.getBoundingClientRect();
       const toolbar = chartCard.querySelector(".toolbar");
@@ -559,17 +561,25 @@
       const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 0;
       const toggleH = toggleRow ? toggleRow.getBoundingClientRect().height : 0;
       const legendH = Math.max(36, els.legend.getBoundingClientRect().height || 36);
-      const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-      const cardVerticalPadding = window.innerWidth <= 760 ? 28 : 44;
-      const minHeight = window.innerWidth <= 760 ? 360 : 420;
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const isMobile = window.innerWidth <= 760;
+      const cardVerticalPadding = isMobile ? 24 : 44;
+      const minHeight = isMobile ? 360 : 420;
       const available = viewportHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
-      state.chartHeight = Math.max(minHeight, available);
+      const nextHeight = Math.max(minHeight, available);
+
+      if (force || !Number.isFinite(state.chartHeight) || !isMobile || Math.abs(nextHeight - state.chartHeight) > 120) {
+        state.chartHeight = nextHeight;
+      }
+
       els.chartContainer.style.height = `${state.chartHeight}px`;
 
       const bottomControls = document.querySelector(".bottom-controls");
-      if (bottomControls) {
+      if (bottomControls && !isMobile) {
         const cardBottom = chartCard.getBoundingClientRect().bottom;
         bottomControls.style.marginTop = `${Math.max(8, viewportHeight - cardBottom + 24)}px`;
+      } else if (bottomControls) {
+        bottomControls.style.marginTop = "8px";
       }
     }
 
@@ -1233,11 +1243,11 @@
     }
 
     function buildSvg() {
-      const width = els.chartContainer.clientWidth || window.innerWidth - 32;
+      const width = els.chartContainer.clientWidth || window.innerWidth - 24;
       const height = state.chartHeight || Math.max(420, window.innerHeight - 32);
       const isMobile = window.innerWidth <= 760;
       const margin = isMobile
-        ? { top: 12, right: 32, bottom: 66, left: 42 }
+        ? { top: 12, right: 28, bottom: 66, left: 50 }
         : { top: 20, right: 64, bottom: 60, left: 68 };
       const svg = d3.create("svg")
         .attr("viewBox", `0 0 ${width} ${height}`)
@@ -1430,7 +1440,7 @@
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6));
       svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
-      svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
+      svg.append("text").attr("transform", `translate(${window.innerWidth <= 760 ? 12 : 18}, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text(window.innerWidth <= 760 ? "ELO" : "ELO rating");
 
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
 
@@ -1495,7 +1505,7 @@
         .call(d3.axisLeft(y).ticks(6).tickFormat(d => `${d}%`));
       drawRightClassAxis(svg, y, width, margin);
       svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
-      svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
+      svg.append("text").attr("transform", `translate(${window.innerWidth <= 760 ? 12 : 18}, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text(window.innerWidth <= 760 ? "HHF % / Rank %" : "Classifier HHF % / Calculated USPSA ranking %");
 
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
       const targetNotes = state.selections.map(sel => ({
@@ -1657,9 +1667,15 @@
     }
 
     let resizeTimer = null;
+    let lastResizeWidth = window.innerWidth;
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => { initChartHeight(); render(); }, 80);
+      resizeTimer = setTimeout(() => {
+        const widthChanged = window.innerWidth !== lastResizeWidth;
+        lastResizeWidth = window.innerWidth;
+        initChartHeight(widthChanged);
+        render();
+      }, 80);
     });
 
     initControls();
