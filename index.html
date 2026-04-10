@@ -130,6 +130,7 @@
     }
     svg text { fill: #cbd5e1; font-size: 12px; }
     .axis path, .axis line { stroke: rgba(255,255,255,0.15); }
+    .axis path.domain { display: none; }
     .grid line { stroke: rgba(255,255,255,0.08); }
     .grid path { stroke: none; }
     @media (max-width: 1080px) { .controls-grid, .add-grid { grid-template-columns: 1fr 1fr; } }
@@ -330,7 +331,10 @@
       const years = d3.timeYear.range(
         d3.timeYear.floor(minDate),
         d3.timeYear.offset(d3.timeYear.ceil(maxDate), 1)
-      );
+      ).filter(d => {
+        const xPos = x(d);
+        return xPos >= margin.left && xPos <= (x.range()[1]);
+      });
 
       svg.append("g")
         .selectAll("line.year-sep")
