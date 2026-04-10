@@ -8,6 +8,7 @@
   <style>
     :root {
       --bg: #020617;
+      --mobile-chart-height: 420px;
       --panel: rgba(10, 20, 45, 0.92);
       --panel-2: rgba(30, 41, 59, 0.95);
       --text: #e5e7eb;
@@ -561,25 +562,32 @@
       const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 0;
       const toggleH = toggleRow ? toggleRow.getBoundingClientRect().height : 0;
       const legendH = Math.max(36, els.legend.getBoundingClientRect().height || 36);
-      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
       const isMobile = window.innerWidth <= 760;
-      const cardVerticalPadding = isMobile ? 24 : 44;
-      const minHeight = isMobile ? 360 : 420;
-      const available = viewportHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
-      const nextHeight = Math.max(minHeight, available);
 
-      if (force || !Number.isFinite(state.chartHeight) || !isMobile || Math.abs(nextHeight - state.chartHeight) > 120) {
-        state.chartHeight = nextHeight;
+      if (isMobile) {
+        const stableViewportHeight = Math.max(window.screen?.height || 0, window.innerHeight || 0, document.documentElement.clientHeight || 0);
+        const reserved = toolbarH + toggleH + legendH + 120;
+        const mobileHeight = Math.max(320, Math.min(520, stableViewportHeight - reserved));
+        state.chartHeight = mobileHeight;
+        document.documentElement.style.setProperty("--mobile-chart-height", `${mobileHeight}px`);
+        els.chartContainer.style.height = `${mobileHeight}px`;
+
+        const bottomControls = document.querySelector(".bottom-controls");
+        if (bottomControls) bottomControls.style.marginTop = "8px";
+        return;
       }
 
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const cardVerticalPadding = 44;
+      const minHeight = 420;
+      const available = viewportHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
+      state.chartHeight = Math.max(minHeight, available);
       els.chartContainer.style.height = `${state.chartHeight}px`;
 
       const bottomControls = document.querySelector(".bottom-controls");
-      if (bottomControls && !isMobile) {
+      if (bottomControls) {
         const cardBottom = chartCard.getBoundingClientRect().bottom;
         bottomControls.style.marginTop = `${Math.max(8, viewportHeight - cardBottom + 24)}px`;
-      } else if (bottomControls) {
-        bottomControls.style.marginTop = "8px";
       }
     }
 
@@ -1672,7 +1680,13 @@
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         const widthChanged = window.innerWidth !== lastResizeWidth;
+        const isMobile = window.innerWidth <= 760;
         lastResizeWidth = window.innerWidth;
+
+        if (isMobile && !widthChanged) {
+          return;
+        }
+
         initChartHeight(widthChanged);
         render();
       }, 80);
