@@ -107,6 +107,24 @@
       padding: 24px; width: 100%; height: 100%;
     }
     .footer-note { font-size: 13px; color: var(--muted); line-height: 1.5; }
+    .whatif-panel {
+      display: none;
+      gap: 8px;
+      padding: 10px 12px;
+    }
+    .whatif-panel-content {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px;
+    }
+    .whatif-card {
+      background: rgba(2,6,23,0.72);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.35;
+      min-width: 0;
+    }
     svg text { fill: #cbd5e1; font-size: 12px; }
     .axis path, .axis line { stroke: rgba(255,255,255,0.15); }
     .grid line { stroke: rgba(255,255,255,0.08); }
@@ -116,6 +134,40 @@
       .toolbar { align-items: stretch; }
       .left-tools, .right-tools { width: 100%; }
       .controls-grid, .add-grid { grid-template-columns: 1fr; }
+      .card { padding: 10px; border-radius: 14px; }
+      .chart-card { min-height: calc(100vh - 12px); gap: 8px; }
+      .tab-btn, button { padding: 9px 12px; font-size: 14px; }
+      .toggle-row {
+        gap: 10px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .toggle-row::-webkit-scrollbar { display: none; }
+      .toggle-row label { white-space: nowrap; }
+      .legend {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .legend::-webkit-scrollbar { display: none; }
+      .legend-item, .selection-pill { flex: 0 0 auto; white-space: nowrap; }
+      .selection-pills {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .selection-pills::-webkit-scrollbar { display: none; }
+      input, select { min-height: 44px; font-size: 16px; }
+      .tooltip { max-width: min(300px, calc(100vw - 28px)); font-size: 11px; }
+      .whatif-panel { padding: 8px 10px; }
+      .whatif-panel-content { grid-template-columns: 1fr; }
+      .whatif-card { font-size: 11px; }
     }
   </style>
 </head>
@@ -143,6 +195,8 @@
       <div id="chartContainer" class="chart-wrap"></div>
       <div id="legend" class="legend"></div>
     </div>
+
+    <div id="whatIfPanel" class="card whatif-panel" style="display:none;"></div>
 
     <div class="card bottom-controls">
       <div class="controls-grid">
@@ -367,6 +421,7 @@
       selectionPills: document.getElementById("selectionPills"),
       loadingState: document.getElementById("loadingState"),
       legend: document.getElementById("legend"),
+      whatIfPanel: document.getElementById("whatIfPanel"),
       showPeakToggle: document.getElementById("showPeakToggle"),
       showPredictionToggle: document.getElementById("showPredictionToggle"),
       showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle"),
@@ -473,15 +528,17 @@
       const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 0;
       const toggleH = toggleRow ? toggleRow.getBoundingClientRect().height : 0;
       const legendH = Math.max(36, els.legend.getBoundingClientRect().height || 36);
-      const cardVerticalPadding = 44;
-      const available = window.innerHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
-      state.chartHeight = Math.max(420, available);
+      const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      const cardVerticalPadding = window.innerWidth <= 760 ? 28 : 44;
+      const minHeight = window.innerWidth <= 760 ? 360 : 420;
+      const available = viewportHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
+      state.chartHeight = Math.max(minHeight, available);
       els.chartContainer.style.height = `${state.chartHeight}px`;
 
       const bottomControls = document.querySelector(".bottom-controls");
       if (bottomControls) {
         const cardBottom = chartCard.getBoundingClientRect().bottom;
-        bottomControls.style.marginTop = `${Math.max(8, window.innerHeight - cardBottom + 24)}px`;
+        bottomControls.style.marginTop = `${Math.max(8, viewportHeight - cardBottom + 24)}px`;
       }
     }
 
@@ -711,24 +768,18 @@
       ) || null;
     }
 
-    function requiredAverageForNextClass(sel, nToAdd = 4) {
-      const classifiers = sel.classifiers || [];
-      const rankingHistory = sel.rankingHistory || [];
+    function requiredAverageForNextClass(classifiers, rankingHistory, nToAdd = 4) {
       const currentState = computeCurrentBestSixWindow(classifiers);
       const current = currentState.currentRanking;
       const peakRanking = (rankingHistory && rankingHistory.length) ? d3.max(rankingHistory, d => d.ranking) : current;
       const peakClass = getCurrentClassification(peakRanking);
       const currentPctClass = getCurrentClassification(current);
-
-      const officialCurrentClass = sel.currentClassification || null;
-      const baseClass = officialCurrentClass || currentPctClass || "U";
-      const next = getNextClassificationThresholdFromClass(baseClass);
+      const next = getNextClassificationThresholdFromClass(peakClass || "U");
 
       if (!next) {
         return {
           currentRanking: current,
           currentPctClass,
-          currentOfficialClass: officialCurrentClass,
           peakRanking,
           peakClass,
           nextClass: null,
@@ -736,7 +787,7 @@
         };
       }
 
-      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
+      const baseScores = currentState.bestSix.map(d => d.hhfPct).sort((a, b) => b - a);
       const n = Math.max(1, Number(nToAdd) || 1);
 
       let lo = 0;
@@ -745,7 +796,7 @@
 
       for (let i = 0; i < 40; i++) {
         const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
+        const combined = baseScores.concat(Array(n).fill(mid)).sort((a, b) => b - a).slice(0, 6);
         const avg = d3.mean(combined);
         if (avg >= next.threshold) {
           feasible = true;
@@ -758,7 +809,6 @@
       return {
         currentRanking: current,
         currentPctClass,
-        currentOfficialClass: officialCurrentClass,
         peakRanking,
         peakClass,
         nextClass: next.label,
@@ -949,31 +999,17 @@
     async function loadShooterDivisionBundle(selection) {
       const key = `${selection.id}:${selection.division}`;
       if (state.cache.has(key)) return state.cache.get(key);
-      const [eloPayload, classifierPayload, matchPayload] = await Promise.all([
+      const [eloPayload, classifierPayload] = await Promise.all([
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches`)
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`)
       ]);
       const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
-
-      const matchHistory = findArrayDeep(matchPayload, ["data"])
-        .map(row => ({
-          ...row,
-          division: normalizeDivision(row.division),
-          matchDate: row.match_date ? new Date(row.match_date) : null
-        }))
-        .filter(row => row.matchDate && row.division === normalizeDivision(selection.division))
-        .sort((a, b) => b.matchDate - a.matchDate);
-
-      const latestDivisionMatch = matchHistory[0] || null;
-      const currentClassification = latestDivisionMatch?.classification || null;
       const bundle = {
         ...selection,
         division: normalizeDivision(selection.division),
         eloHistory: parseEloHistory(eloPayload, selection, selection.division),
         classifiers: fullClassifierHistory,
-        rankingHistory: computeRollingRankings(fullClassifierHistory),
-        currentClassification
+        rankingHistory: computeRollingRankings(fullClassifierHistory)
       };
       state.cache.set(key, bundle);
       return bundle;
@@ -1045,7 +1081,7 @@
       if (state.showPeak) url.searchParams.set("peak", "1"); else url.searchParams.delete("peak");
       if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
       if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
-      if (state.showWhatIf) url.searchParams.set("whatif", "1"); else url.searchParams.set("whatif", "0");
+      if (!state.showWhatIf) url.searchParams.set("whatif", "0"); else url.searchParams.delete("whatif");
       if (state.focusedSeries) url.searchParams.set("focus", encodeURIComponent(state.focusedSeries)); else url.searchParams.delete("focus");
       if (state.targetClassifierCount !== 4) url.searchParams.set("targetn", String(state.targetClassifierCount)); else url.searchParams.delete("targetn");
       if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
@@ -1126,6 +1162,10 @@
       els.chartContainer.innerHTML = "";
       els.legend.innerHTML = "";
       els.chartContainer.style.height = `${state.chartHeight}px`;
+      if (els.whatIfPanel) {
+        els.whatIfPanel.innerHTML = "";
+        els.whatIfPanel.style.display = "none";
+      }
     }
 
     function getColorScale() {
@@ -1140,7 +1180,10 @@
     function buildSvg() {
       const width = els.chartContainer.clientWidth || window.innerWidth - 32;
       const height = state.chartHeight || Math.max(420, window.innerHeight - 32);
-      const margin = { top: 20, right: 64, bottom: 60, left: 68 };
+      const isMobile = window.innerWidth <= 760;
+      const margin = isMobile
+        ? { top: 12, right: 34, bottom: 42, left: 44 }
+        : { top: 20, right: 64, bottom: 60, left: 68 };
       const svg = d3.create("svg")
         .attr("viewBox", `0 0 ${width} ${height}`)
         .style("width", "100%")
@@ -1183,6 +1226,47 @@
       empty.className = "empty";
       empty.textContent = message;
       els.chartContainer.appendChild(empty);
+      if (els.whatIfPanel) {
+        els.whatIfPanel.style.display = "none";
+        els.whatIfPanel.innerHTML = "";
+      }
+    }
+
+    function renderWhatIfPanel(targetNotes, color) {
+      if (!els.whatIfPanel) return;
+      els.whatIfPanel.innerHTML = "";
+      if (!state.showWhatIf || !targetNotes.length) {
+        els.whatIfPanel.style.display = "none";
+        return;
+      }
+
+      const content = document.createElement("div");
+      content.className = "whatif-panel-content";
+
+      targetNotes.forEach(entry => {
+        if (!entry.note) return;
+        const colorValue = color(entry.key);
+        const box = document.createElement("div");
+        box.className = "whatif-card";
+        box.style.border = `1px solid ${colorValue}`;
+
+        if (!entry.note.nextClass) {
+          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Already at top class.`;
+        } else if (entry.note.requiredAverage == null) {
+          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
+        } else {
+          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
+        }
+        content.appendChild(box);
+      });
+
+      if (!content.children.length) {
+        els.whatIfPanel.style.display = "none";
+        return;
+      }
+
+      els.whatIfPanel.appendChild(content);
+      els.whatIfPanel.style.display = "block";
     }
 
     function positionTooltip(event, tooltip) {
@@ -1283,11 +1367,11 @@
       drawYearSeparators(svg, x, height, margin, allDates);
 
       svg.append("g").attr("class", "grid").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
+        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
       svg.append("g").attr("class", "grid").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(() => ""));
       svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
+        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6));
       svg.append("text").attr("x", width / 2).attr("y", height - 18).attr("text-anchor", "middle").text("Date");
@@ -1347,11 +1431,11 @@
       drawClassLines(svg, y, width, margin);
 
       svg.append("g").attr("class", "grid").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
+        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickSize(-(height - margin.top - margin.bottom)).tickFormat(() => ""));
       svg.append("g").attr("class", "grid").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(() => ""));
       svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
+        .call(d3.axisBottom(x).ticks(window.innerWidth <= 760 ? d3.timeMonth.every(2) : d3.timeMonth.every(1)).tickFormat(d => formatSmartMonthYear(d, xDomain)));
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickFormat(d => `${d}%`));
       drawRightClassAxis(svg, y, width, margin);
@@ -1361,7 +1445,7 @@
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
       const targetNotes = state.selections.map(sel => ({
         key: seriesKey(sel),
-        note: requiredAverageForNextClass(sel, state.targetClassifierCount)
+        note: requiredAverageForNextClass(sel.classifiers || [], sel.rankingHistory || [], state.targetClassifierCount)
       }));
 
       series.forEach(serie => {
@@ -1498,9 +1582,9 @@
           if (!entry.note.nextClass) {
             box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "N/A"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Already at top class.`;
           } else if (entry.note.requiredAverage == null) {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
+            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
           } else {
-            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
+            box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
           }
           targetContainer.appendChild(box);
         });
