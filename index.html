@@ -799,18 +799,24 @@
       ) || null;
     }
 
-    function requiredAverageForNextClass(classifiers, rankingHistory, nToAdd = 4) {
+    function requiredAverageForNextClass(sel, nToAdd = 4) {
+      const classifiers = sel.classifiers || [];
+      const rankingHistory = sel.rankingHistory || [];
       const currentState = computeCurrentBestSixWindow(classifiers);
       const current = currentState.currentRanking;
-      const peakRanking = (rankingHistory && rankingHistory.length) ? d3.max(rankingHistory, d => d.ranking) : current;
+      const peakRanking = rankingHistory.length ? d3.max(rankingHistory, d => d.ranking) : current;
       const peakClass = getCurrentClassification(peakRanking);
       const currentPctClass = getCurrentClassification(current);
-      const next = getNextClassificationThresholdFromClass(peakClass || "U");
+
+      const officialCurrentClass = sel.currentClassification || null;
+      const baseClass = officialCurrentClass || currentPctClass || "U";
+      const next = getNextClassificationThresholdFromClass(baseClass);
 
       if (!next) {
         return {
           currentRanking: current,
           currentPctClass,
+          currentOfficialClass: officialCurrentClass,
           peakRanking,
           peakClass,
           nextClass: null,
@@ -818,7 +824,7 @@
         };
       }
 
-      const baseScores = currentState.bestSix.map(d => d.hhfPct).sort((a, b) => b - a);
+      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
       const n = Math.max(1, Number(nToAdd) || 1);
 
       let lo = 0;
@@ -827,7 +833,7 @@
 
       for (let i = 0; i < 40; i++) {
         const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(mid)).sort((a, b) => b - a).slice(0, 6);
+        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
         const avg = d3.mean(combined);
         if (avg >= next.threshold) {
           feasible = true;
@@ -840,6 +846,7 @@
       return {
         currentRanking: current,
         currentPctClass,
+        currentOfficialClass: officialCurrentClass,
         peakRanking,
         peakClass,
         nextClass: next.label,
@@ -1030,17 +1037,34 @@
     async function loadShooterDivisionBundle(selection) {
       const key = `${selection.id}:${selection.division}`;
       if (state.cache.has(key)) return state.cache.get(key);
-      const [eloPayload, classifierPayload] = await Promise.all([
+
+      const [eloPayload, classifierPayload, matchPayload] = await Promise.all([
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`)
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches`)
       ]);
+
       const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
+      const targetDivision = normalizeDivision(selection.division);
+
+      const latestDivisionMatch = findArrayDeep(matchPayload, ["data"])
+        .map(row => ({
+          ...row,
+          division: normalizeDivision(row.division),
+          matchDate: row.match_date ? new Date(row.match_date) : parseDateValue(row)
+        }))
+        .filter(row => row.matchDate && row.division === targetDivision)
+        .sort((a, b) => b.matchDate - a.matchDate)[0] || null;
+
+      const currentClassification = latestDivisionMatch?.classification || null;
+
       const bundle = {
         ...selection,
-        division: normalizeDivision(selection.division),
+        division: targetDivision,
         eloHistory: parseEloHistory(eloPayload, selection, selection.division),
         classifiers: fullClassifierHistory,
-        rankingHistory: computeRollingRankings(fullClassifierHistory)
+        rankingHistory: computeRollingRankings(fullClassifierHistory),
+        currentClassification
       };
       state.cache.set(key, bundle);
       return bundle;
@@ -1476,7 +1500,7 @@
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
       const targetNotes = state.selections.map(sel => ({
         key: seriesKey(sel),
-        note: requiredAverageForNextClass(sel.classifiers || [], sel.rankingHistory || [], state.targetClassifierCount)
+        note: requiredAverageForNextClass(sel, state.targetClassifierCount)
       }));
 
       series.forEach(serie => {
