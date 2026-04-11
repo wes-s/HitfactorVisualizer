@@ -332,8 +332,12 @@
       return d3.timeFormat("%b '%y")(d);
     }
 
+    function shouldUseTouchViewportLayout() {
+      return window.matchMedia("(pointer: coarse)").matches || window.innerWidth <= 760;
+    }
+
     function applyBottomAxis(g, x, xDomain) {
-      const isMobile = window.innerWidth <= 760;
+      const isMobile = shouldUseTouchViewportLayout();
       g.call(
         d3.axisBottom(x)
           .ticks(getBottomAxisInterval())
@@ -615,11 +619,10 @@
       const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 0;
       const toggleH = toggleRow ? toggleRow.getBoundingClientRect().height : 0;
       const legendH = Math.max(36, els.legend.getBoundingClientRect().height || 36);
-      const isMobile = window.innerWidth <= 760;
+      const shouldLockChartHeight = shouldUseTouchViewportLayout();
 
-      if (isMobile) {
+      if (shouldLockChartHeight) {
         const orientation = window.innerWidth > window.innerHeight ? "landscape" : "portrait";
-
         if (force || !state.mobileChartHeight || !state.mobileOrientation || state.mobileOrientation !== orientation) {
           const stableViewportHeight = Math.max(
             window.screen?.height || 0,
@@ -630,7 +633,6 @@
           state.mobileChartHeight = Math.max(320, Math.min(520, stableViewportHeight - reserved));
           state.mobileOrientation = orientation;
         }
-
         state.chartHeight = state.mobileChartHeight;
         els.chartContainer.style.height = `${state.chartHeight}px`;
 
@@ -1580,7 +1582,7 @@
     function buildSvg() {
       const width = els.chartContainer.clientWidth || window.innerWidth - 32;
       const height = state.chartHeight || Math.max(420, window.innerHeight - 32);
-      const isMobile = window.innerWidth <= 760;
+      const isMobile = shouldUseTouchViewportLayout();
       const margin = isMobile
         ? { top: 12, right: 32, bottom: 66, left: 42 }
         : { top: 20, right: 64, bottom: 60, left: 68 };
@@ -1779,7 +1781,7 @@
         .call(g => applyBottomAxis(g, x, xDomain));
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6));
-      svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
+      svg.append("text").attr("x", width / 2).attr("y", height - (shouldUseTouchViewportLayout() ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", shouldUseTouchViewportLayout() ? "10px" : "12px").text("Date");
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
 
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
@@ -1844,7 +1846,7 @@
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6).tickFormat(d => `${d}%`));
       drawRightClassAxis(svg, y, width, margin);
-      svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
+      svg.append("text").attr("x", width / 2).attr("y", height - (shouldUseTouchViewportLayout() ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", shouldUseTouchViewportLayout() ? "10px" : "12px").text("Date");
       svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
 
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
@@ -2019,11 +2021,11 @@
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        const isMobile = window.innerWidth <= 760;
+        const shouldLockChartHeight = shouldUseTouchViewportLayout();
         const widthChanged = window.innerWidth !== lastResizeWidth;
         lastResizeWidth = window.innerWidth;
 
-        if (isMobile) {
+        if (shouldLockChartHeight) {
           return;
         }
 
