@@ -468,7 +468,8 @@
       colorAssignments: new Map(),
       targetClassifierCount: 4,
       mobileChartHeight: null,
-      mobileOrientation: null
+      mobileOrientation: null,
+      pendingManualScores: []
     };
 
     const els = {
@@ -1253,6 +1254,72 @@
       return state.selections.find(sel => `${sel.id}:${sel.division}` === bundleKey) || null;
     }
 
+    function serializeManualScores() {
+      const entries = [];
+      state.selections.forEach(sel => {
+        (sel.classifiers || []).filter(row => row.isManual).forEach(row => {
+          entries.push([
+            encodeURIComponent(String(sel.id || "")),
+            encodeURIComponent(normalizeDivision(sel.division)),
+            encodeURIComponent(String(row.code || "")),
+            encodeURIComponent(String(row.manualHitfactor ?? "")),
+            encodeURIComponent(row.date instanceof Date ? row.date.toISOString().slice(0, 10) : ""),
+            encodeURIComponent(String(row.hhfPct ?? "")),
+            encodeURIComponent(String(row.hhfValue ?? "")),
+            encodeURIComponent(String(row.classifierName || ""))
+          ].join("~"));
+        });
+      });
+      return entries.join("|");
+    }
+
+    function reapplyManualScoresFromUrl() {
+      const pending = state.pendingManualScores || [];
+      if (!pending.length) return;
+
+      pending.forEach(item => {
+        const selection = state.selections.find(sel =>
+          String(sel.id) === String(item.id) && normalizeDivision(sel.division) === normalizeDivision(item.division)
+        );
+        if (!selection) return;
+
+        const manualDate = new Date(`${item.date}T12:00:00`);
+        if (Number.isNaN(manualDate.getTime())) return;
+
+        const duplicate = (selection.classifiers || []).some(row =>
+          row.isManual &&
+          String(row.code || "") === item.code &&
+          Number(row.manualHitfactor) === Number(item.hitfactor) &&
+          row.date instanceof Date &&
+          row.date.toISOString().slice(0, 10) === item.date
+        );
+        if (duplicate) return;
+
+        const nextIdx = (selection.classifiers || []).reduce((max, row) => Math.max(max, Number(row.idx) || 0), 0) + 1;
+        const manualRow = {
+          shooterId: selection.id,
+          shooterName: selection.name,
+          division: normalizeDivision(selection.division),
+          date: manualDate,
+          hhfPct: Math.max(0, Number(item.hhfPct) || 0),
+          code: item.code,
+          classifierName: item.classifierName || item.code,
+          matchName: `Provisional manual score · HF ${Number(item.hitfactor).toFixed(2)}`,
+          idx: nextIdx + 1000000,
+          isManual: true,
+          manualHitfactor: Number(item.hitfactor),
+          hhfValue: Number(item.hhfValue) || null
+        };
+
+        selection.classifiers = [...(selection.classifiers || []), manualRow]
+          .sort((a, b) => a.date - b.date || a.idx - b.idx);
+        selection.rankingHistory = computeRollingRankings(selection.classifiers || []);
+        state.cache.set(`${selection.id}:${selection.division}`, selection);
+      });
+
+      state.pendingManualScores = [];
+    }
+
     function renderManualScorePills() {
       if (!els.manualScorePills) return;
       els.manualScorePills.innerHTML = "";
@@ -1407,6 +1474,10 @@
       } else {
         url.searchParams.delete("pairs");
       }
+
+      const manual = serializeManualScores();
+      if (manual) url.searchParams.set("manual", manual); else url.searchParams.delete("manual");
+
       return url.toString();
     }
 
@@ -1445,6 +1516,7 @@
       const whatif = params.get("whatif");
       const focus = params.get("focus");
       const targetn = params.get("targetn");
+      const manual = params.get("manual");
       if (tab === "elo" || tab === "classifiers") state.activeTab = tab;
       if (start) state.startDate = start;
       if (end) state.endDate = end;
@@ -1468,6 +1540,22 @@
           return { name, division: normalizeDivision(division), id: id ? Number(id) || id : null };
         }).filter(sel => sel.name && sel.division);
       }
+
+      state.pendingManualScores = manual
+        ? manual.split("|").map(part => {
+            const [id, division, code, hitfactor, date, hhfPct, hhfValue, classifierName] = part.split("~").map(v => decodeURIComponent(v || ""));
+            return {
+              id: id ? Number(id) || id : id,
+              division: normalizeDivision(division),
+              code,
+              hitfactor: Number(hitfactor),
+              date,
+              hhfPct: Number(hhfPct),
+              hhfValue: Number(hhfValue),
+              classifierName
+            };
+          }).filter(item => item.id && item.division && item.code && item.date)
+        : [];
     }
 
     function clearChart() {
@@ -1562,12 +1650,17 @@
         box.className = "whatif-card";
         box.style.border = `1px solid ${colorValue}`;
 
+        const officialClass = entry.note.currentOfficialClass || "Unknown";
+        const calcClass = entry.note.currentPctClass || "U";
+        const usingClass = entry.note.effectiveCurrentClass || calcClass || officialClass || "U";
+        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${calcClass})<br>Official: ${officialClass}<br>Current calc: ${calcClass}<br>Target basis: ${usingClass}`;
+
         if (!entry.note.nextClass) {
-          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Calc class: ${entry.note.currentPctClass || "U"}<br>Using class: ${entry.note.effectiveCurrentClass || entry.note.currentPctClass || entry.note.currentOfficialClass || "U"}<br>Already at top class.`;
+          box.innerHTML = `${summaryPrefix}<br>Already at top class.`;
         } else if (entry.note.requiredAverage == null) {
-          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Calc class: ${entry.note.currentPctClass || "U"}<br>Using class: ${entry.note.effectiveCurrentClass || entry.note.currentPctClass || entry.note.currentOfficialClass || "U"}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
+          box.innerHTML = `${summaryPrefix}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
         } else {
-          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Calc class: ${entry.note.currentPctClass || "U"}<br>Using class: ${entry.note.effectiveCurrentClass || entry.note.currentPctClass || entry.note.currentOfficialClass || "U"}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
+          box.innerHTML = `${summaryPrefix}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
         }
         content.appendChild(box);
       });
@@ -1803,10 +1896,16 @@
             .style("pointer-events", "none");
 
           svg.append("g").selectAll("circle.classifier").data(serie.classifiers).join("circle")
-            .attr("cx", d => x(d.date)).attr("cy", d => y(d.hhfPct)).attr("r", 4).attr("fill", color(serie.key)).attr("opacity", 0.72)
+            .attr("cx", d => x(d.date))
+            .attr("cy", d => y(d.hhfPct))
+            .attr("r", d => d.isManual ? 5.5 : 4)
+            .attr("fill", d => d.isManual ? "none" : color(serie.key))
+            .attr("stroke", d => d.isManual ? color(serie.key) : "none")
+            .attr("stroke-width", d => d.isManual ? 2 : 0)
+            .attr("opacity", 0.72)
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
@@ -1903,6 +2002,7 @@
           hydrated.push(bundle);
         }
         state.selections = hydrated;
+        reapplyManualScoresFromUrl();
         renderSelections();
         render();
       } catch (error) {
@@ -1924,9 +2024,6 @@
         lastResizeWidth = window.innerWidth;
 
         if (isMobile) {
-          if (!widthChanged) return;
-          initChartHeight(true);
-          render();
           return;
         }
 
@@ -1937,6 +2034,8 @@
 
     window.addEventListener("orientationchange", () => {
       setTimeout(() => {
+        state.mobileChartHeight = null;
+        state.mobileOrientation = null;
         initChartHeight(true);
         render();
       }, 150);
