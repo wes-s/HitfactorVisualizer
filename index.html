@@ -1912,7 +1912,7 @@
             .attr("opacity", 0.72)
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${Number.isFinite(d.hitfactor ?? d.manualHitfactor) ? `<br>HF: ${(d.hitfactor ?? d.manualHitfactor).toFixed(2)}` : ""}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${Number.isFinite(d.hitfactor) ? `<br>HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
