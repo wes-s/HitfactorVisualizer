@@ -942,42 +942,7 @@
         requiredAverage: feasible ? hi : null,
         superseded: getSupersededClassifierPoints(classifiers)
       };
-    };
-      }
-
-      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
-      const n = Math.max(1, Number(nToAdd) || 1);
-
-      let lo = 0;
-      let hi = 130;
-      let feasible = false;
-
-      for (let i = 0; i < 40; i++) {
-        const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
-        const avg = d3.mean(combined);
-        if (avg >= next.threshold) {
-          feasible = true;
-          hi = mid;
-        } else {
-          lo = mid;
-        }
-      }
-
-      return {
-        currentRanking: current,
-        currentPctClass,
-        currentOfficialClass: officialCurrentClass,
-        peakRanking,
-        peakClass,
-        nextClass: next.label,
-        nextThreshold: next.threshold,
-        nToAdd: n,
-        requiredAverage: feasible ? hi : null,
-        superseded: getSupersededClassifierPoints(classifiers)
-      };
     }
-
     function drawClassLines(svg, y, width, margin) {
       const g = svg.append("g");
       CLASS_LINES.forEach(line => {
