@@ -462,7 +462,9 @@
       showWhatIf: false,
       focusedSeries: null,
       colorAssignments: new Map(),
-      targetClassifierCount: 4
+      targetClassifierCount: 4,
+      mobileChartHeight: null,
+      mobileOrientation: null
     };
 
     const els = {
@@ -610,16 +612,20 @@
       const isMobile = window.innerWidth <= 760;
 
       if (isMobile) {
-        const stableViewportHeight = Math.max(
-          window.screen?.height || 0,
-          window.innerHeight || 0,
-          document.documentElement.clientHeight || 0
-        );
-        const reserved = toolbarH + toggleH + legendH + 120;
-        const mobileHeight = Math.max(320, Math.min(520, stableViewportHeight - reserved));
-        if (force || !Number.isFinite(state.chartHeight) || Math.abs(mobileHeight - state.chartHeight) > 120) {
-          state.chartHeight = mobileHeight;
+        const orientation = window.innerWidth > window.innerHeight ? "landscape" : "portrait";
+
+        if (!state.mobileChartHeight || !state.mobileOrientation || state.mobileOrientation !== orientation || force) {
+          const stableViewportHeight = Math.max(
+            window.screen?.height || 0,
+            window.innerHeight || 0,
+            document.documentElement.clientHeight || 0
+          );
+          const reserved = toolbarH + toggleH + legendH + 120;
+          state.mobileChartHeight = Math.max(320, Math.min(520, stableViewportHeight - reserved));
+          state.mobileOrientation = orientation;
         }
+
+        state.chartHeight = state.mobileChartHeight;
         els.chartContainer.style.height = `${state.chartHeight}px`;
 
         const bottomControls = document.querySelector(".bottom-controls");
@@ -802,6 +808,14 @@
       return null;
     }
 
+    function getClassificationRank(cls) {
+      return { U: 0, C: 1, B: 2, A: 3, M: 4, GM: 5 }[cls] ?? -1;
+    }
+
+    function getMoreAdvancedClass(a, b) {
+      return getClassificationRank(a) >= getClassificationRank(b) ? a : b;
+    }
+
     function computeCurrentBestSixWindow(classifiers) {
       const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
       const latestByCode = new Map();
@@ -876,19 +890,59 @@
       const peakClass = getCurrentClassification(peakRanking);
       const currentPctClass = getCurrentClassification(current);
       const officialCurrentClass = sel.currentClassification || null;
-      const baseClass = officialCurrentClass || currentPctClass || "U";
-      const next = getNextClassificationThresholdFromClass(baseClass);
+
+      const effectiveCurrentClass = getMoreAdvancedClass(
+        officialCurrentClass || "U",
+        currentPctClass || "U"
+      );
+      const next = getNextClassificationThresholdFromClass(effectiveCurrentClass);
 
       if (!next) {
         return {
           currentRanking: current,
           currentPctClass,
           currentOfficialClass: officialCurrentClass,
+          effectiveCurrentClass,
           peakRanking,
           peakClass,
           nextClass: null,
           superseded: getSupersededClassifierPoints(classifiers)
         };
+      }
+
+      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
+      const n = Math.max(1, Number(nToAdd) || 1);
+
+      let lo = 0;
+      let hi = 130;
+      let feasible = false;
+
+      for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
+        const avg = d3.mean(combined);
+        if (avg >= next.threshold) {
+          feasible = true;
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+      }
+
+      return {
+        currentRanking: current,
+        currentPctClass,
+        currentOfficialClass: officialCurrentClass,
+        effectiveCurrentClass,
+        peakRanking,
+        peakClass,
+        nextClass: next.label,
+        nextThreshold: next.threshold,
+        nToAdd: n,
+        requiredAverage: feasible ? hi : null,
+        superseded: getSupersededClassifierPoints(classifiers)
+      };
+    };
       }
 
       const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
@@ -1492,11 +1546,11 @@
         box.style.border = `1px solid ${colorValue}`;
 
         if (!entry.note.nextClass) {
-          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Already at top class.`;
+          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Calc class: ${entry.note.currentPctClass || "U"}<br>Using class: ${entry.note.effectiveCurrentClass || entry.note.currentPctClass || entry.note.currentOfficialClass || "U"}<br>Already at top class.`;
         } else if (entry.note.requiredAverage == null) {
-          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
+          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Calc class: ${entry.note.currentPctClass || "U"}<br>Using class: ${entry.note.effectiveCurrentClass || entry.note.currentPctClass || entry.note.currentOfficialClass || "U"}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
         } else {
-          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
+          box.innerHTML = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${entry.note.currentPctClass || "U"})<br>Official class: ${entry.note.currentOfficialClass || "Unknown"}<br>Calc class: ${entry.note.currentPctClass || "U"}<br>Using class: ${entry.note.effectiveCurrentClass || entry.note.currentPctClass || entry.note.currentOfficialClass || "U"}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
         }
         content.appendChild(box);
       });
@@ -1844,18 +1898,23 @@
 
     let resizeTimer = null;
     let lastResizeWidth = window.innerWidth;
+    let lastOrientation = window.innerWidth > window.innerHeight ? "landscape" : "portrait";
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         const widthChanged = window.innerWidth !== lastResizeWidth;
+        const orientation = window.innerWidth > window.innerHeight ? "landscape" : "portrait";
+        const orientationChanged = orientation !== lastOrientation;
         const isMobile = window.innerWidth <= 760;
-        lastResizeWidth = window.innerWidth;
 
-        if (isMobile && !widthChanged) {
+        lastResizeWidth = window.innerWidth;
+        lastOrientation = orientation;
+
+        if (isMobile && !widthChanged && !orientationChanged) {
           return;
         }
 
-        initChartHeight(widthChanged);
+        initChartHeight(widthChanged || orientationChanged);
         render();
       }, 80);
     });
