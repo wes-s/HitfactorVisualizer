@@ -1663,11 +1663,6 @@
           box.innerHTML = `${summaryPrefix}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
         } else {
           box.innerHTML = `${summaryPrefix}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
-        }<br>Already at top class.`;
-        } else if (entry.note.requiredAverage == null) {
-          box.innerHTML = `${summaryPrefix}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
-        } else {
-          box.innerHTML = `${summaryPrefix}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
         }
         content.appendChild(box);
       });
