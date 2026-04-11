@@ -8,7 +8,6 @@
   <style>
     :root {
       --bg: #020617;
-      --mobile-chart-height: 420px;
       --panel: rgba(10, 20, 45, 0.92);
       --panel-2: rgba(30, 41, 59, 0.95);
       --text: #e5e7eb;
@@ -130,16 +129,14 @@
     }
     svg text { fill: #cbd5e1; font-size: 12px; }
     .axis path, .axis line { stroke: rgba(255,255,255,0.15); }
-    .axis path.domain { display: none; }
     .grid line { stroke: rgba(255,255,255,0.08); }
     .grid path { stroke: none; }
-    @media (max-width: 1080px) { .controls-grid, .add-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 1080px) { .controls-grid, .add-grid, .manual-grid { grid-template-columns: 1fr 1fr !important; } }
     @media (max-width: 760px) {
-      .app { padding: 4px; gap: 4px; }
       .toolbar { align-items: stretch; }
       .left-tools, .right-tools { width: 100%; }
-      .controls-grid, .add-grid { grid-template-columns: 1fr; }
-      .card { padding: 8px; border-radius: 14px; }
+      .controls-grid, .add-grid, .manual-grid { grid-template-columns: 1fr !important; }
+      .card { padding: 10px; border-radius: 14px; }
       .chart-card { grid-template-rows: auto auto auto 1fr auto; min-height: auto; gap: 8px; }
       .tab-btn, button { padding: 9px 12px; font-size: 14px; }
       .toggle-row {
@@ -175,7 +172,6 @@
       .whatif-panel-content { grid-template-columns: 1fr; }
       .whatif-panel { order: 2; }
       .whatif-card { font-size: 11px; width: 100%; }
-      .chart-wrap { margin-left: -2px; margin-right: -2px; }
     }
   </style>
 </head>
@@ -259,8 +255,33 @@
         </div>
       </div>
 
+      <div class="card" style="padding:12px;">
+        <div class="add-grid manual-grid" style="grid-template-columns: 1.35fr 0.8fr 0.8fr 0.9fr auto;">
+          <div>
+            <label for="manualSelectionSelect">Add provisional classifier to</label>
+            <select id="manualSelectionSelect"></select>
+          </div>
+          <div>
+            <label for="manualClassifierCode">Classifier code</label>
+            <input id="manualClassifierCode" type="text" placeholder="03-02" />
+          </div>
+          <div>
+            <label for="manualHitfactor">Hit factor</label>
+            <input id="manualHitfactor" type="number" min="0" step="0.01" placeholder="5.32" />
+          </div>
+          <div>
+            <label for="manualClassifierDate">Date</label>
+            <input id="manualClassifierDate" type="date" />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="addManualClassifierBtn" class="primary">Add score</button>
+          </div>
+        </div>
+      </div>
+
       <div class="footer-note">
-        Peak lines are flat lines at the all-time peak value for that shooter/division metric, using full history and clipped by the visible date range.
+        Peak lines are flat lines at the all-time peak value for that shooter/division metric, using full history and clipped by the visible date range. Provisional classifier scores are local to your current session and immediately update the ranking line and What-if calculation.
       </div>
     </div>
   </div>
@@ -331,10 +352,7 @@
       const years = d3.timeYear.range(
         d3.timeYear.floor(minDate),
         d3.timeYear.offset(d3.timeYear.ceil(maxDate), 1)
-      ).filter(d => {
-        const xPos = x(d);
-        return xPos >= margin.left && xPos <= (x.range()[1]);
-      });
+      );
 
       svg.append("g")
         .selectAll("line.year-sep")
@@ -466,6 +484,11 @@
       showWhatIfToggle: document.getElementById("showWhatIfToggle"),
       targetClassifierCount: document.getElementById("targetClassifierCount"),
       recomputeTargetsBtn: document.getElementById("recomputeTargetsBtn"),
+      manualSelectionSelect: document.getElementById("manualSelectionSelect"),
+      manualClassifierCode: document.getElementById("manualClassifierCode"),
+      manualHitfactor: document.getElementById("manualHitfactor"),
+      manualClassifierDate: document.getElementById("manualClassifierDate"),
+      addManualClassifierBtn: document.getElementById("addManualClassifierBtn"),
       showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle")
     };
 
@@ -553,12 +576,27 @@
           render();
         }
       });
+      if (els.addManualClassifierBtn) {
+        els.addManualClassifierBtn.addEventListener("click", addManualClassifier);
+      }
+      if (els.manualHitfactor) {
+        els.manualHitfactor.addEventListener("keydown", event => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            addManualClassifier();
+          }
+        });
+      }
+      if (els.manualClassifierDate && !els.manualClassifierDate.value) {
+        els.manualClassifierDate.value = new Date().toISOString().slice(0, 10);
+      }
+
       applyUrlState();
       renderSelections();
-      initChartHeight(true);
+      initChartHeight();
     }
 
-    function initChartHeight(force = false) {
+    function initChartHeight() {
       const chartCard = document.querySelector(".chart-card");
       const chartCardRect = chartCard.getBoundingClientRect();
       const toolbar = chartCard.querySelector(".toolbar");
@@ -566,24 +604,9 @@
       const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 0;
       const toggleH = toggleRow ? toggleRow.getBoundingClientRect().height : 0;
       const legendH = Math.max(36, els.legend.getBoundingClientRect().height || 36);
-      const isMobile = window.innerWidth <= 760;
-
-      if (isMobile) {
-        const stableViewportHeight = Math.max(window.screen?.height || 0, window.innerHeight || 0, document.documentElement.clientHeight || 0);
-        const reserved = toolbarH + toggleH + legendH + 120;
-        const mobileHeight = Math.max(320, Math.min(520, stableViewportHeight - reserved));
-        state.chartHeight = mobileHeight;
-        document.documentElement.style.setProperty("--mobile-chart-height", `${mobileHeight}px`);
-        els.chartContainer.style.height = `${mobileHeight}px`;
-
-        const bottomControls = document.querySelector(".bottom-controls");
-        if (bottomControls) bottomControls.style.marginTop = "8px";
-        return;
-      }
-
-      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
-      const cardVerticalPadding = 44;
-      const minHeight = 420;
+      const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      const cardVerticalPadding = window.innerWidth <= 760 ? 28 : 44;
+      const minHeight = window.innerWidth <= 760 ? 360 : 420;
       const available = viewportHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
       state.chartHeight = Math.max(minHeight, available);
       els.chartContainer.style.height = `${state.chartHeight}px`;
@@ -821,24 +844,18 @@
       ) || null;
     }
 
-    function requiredAverageForNextClass(sel, nToAdd = 4) {
-      const classifiers = sel.classifiers || [];
-      const rankingHistory = sel.rankingHistory || [];
+    function requiredAverageForNextClass(classifiers, rankingHistory, nToAdd = 4) {
       const currentState = computeCurrentBestSixWindow(classifiers);
       const current = currentState.currentRanking;
-      const peakRanking = rankingHistory.length ? d3.max(rankingHistory, d => d.ranking) : current;
+      const peakRanking = (rankingHistory && rankingHistory.length) ? d3.max(rankingHistory, d => d.ranking) : current;
       const peakClass = getCurrentClassification(peakRanking);
       const currentPctClass = getCurrentClassification(current);
-
-      const officialCurrentClass = sel.currentClassification || null;
-      const baseClass = officialCurrentClass || currentPctClass || "U";
-      const next = getNextClassificationThresholdFromClass(baseClass);
+      const next = getNextClassificationThresholdFromClass(peakClass || "U");
 
       if (!next) {
         return {
           currentRanking: current,
           currentPctClass,
-          currentOfficialClass: officialCurrentClass,
           peakRanking,
           peakClass,
           nextClass: null,
@@ -846,7 +863,7 @@
         };
       }
 
-      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
+      const baseScores = currentState.bestSix.map(d => d.hhfPct).sort((a, b) => b - a);
       const n = Math.max(1, Number(nToAdd) || 1);
 
       let lo = 0;
@@ -855,7 +872,7 @@
 
       for (let i = 0; i < 40; i++) {
         const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
+        const combined = baseScores.concat(Array(n).fill(mid)).sort((a, b) => b - a).slice(0, 6);
         const avg = d3.mean(combined);
         if (avg >= next.threshold) {
           feasible = true;
@@ -868,7 +885,6 @@
       return {
         currentRanking: current,
         currentPctClass,
-        currentOfficialClass: officialCurrentClass,
         peakRanking,
         peakClass,
         nextClass: next.label,
@@ -1059,34 +1075,17 @@
     async function loadShooterDivisionBundle(selection) {
       const key = `${selection.id}:${selection.division}`;
       if (state.cache.has(key)) return state.cache.get(key);
-
-      const [eloPayload, classifierPayload, matchPayload] = await Promise.all([
+      const [eloPayload, classifierPayload] = await Promise.all([
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches`)
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`)
       ]);
-
       const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
-      const targetDivision = normalizeDivision(selection.division);
-
-      const latestDivisionMatch = findArrayDeep(matchPayload, ["data"])
-        .map(row => ({
-          ...row,
-          division: normalizeDivision(row.division),
-          matchDate: row.match_date ? new Date(row.match_date) : parseDateValue(row)
-        }))
-        .filter(row => row.matchDate && row.division === targetDivision)
-        .sort((a, b) => b.matchDate - a.matchDate)[0] || null;
-
-      const currentClassification = latestDivisionMatch?.classification || null;
-
       const bundle = {
         ...selection,
-        division: targetDivision,
+        division: normalizeDivision(selection.division),
         eloHistory: parseEloHistory(eloPayload, selection, selection.division),
         classifiers: fullClassifierHistory,
-        rankingHistory: computeRollingRankings(fullClassifierHistory),
-        currentClassification
+        rankingHistory: computeRollingRankings(fullClassifierHistory)
       };
       state.cache.set(key, bundle);
       return bundle;
@@ -1148,6 +1147,119 @@
         pill.appendChild(btn);
         els.selectionPills.appendChild(pill);
       });
+      renderManualSelectionOptions();
+    }
+
+    function renderManualSelectionOptions() {
+      if (!els.manualSelectionSelect) return;
+      const currentValue = els.manualSelectionSelect.value;
+      els.manualSelectionSelect.innerHTML = "";
+
+      if (!state.selections.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Add a shooter/division first";
+        els.manualSelectionSelect.appendChild(option);
+        els.manualSelectionSelect.disabled = true;
+        if (els.addManualClassifierBtn) els.addManualClassifierBtn.disabled = true;
+        return;
+      }
+
+      els.manualSelectionSelect.disabled = false;
+      if (els.addManualClassifierBtn) els.addManualClassifierBtn.disabled = false;
+
+      state.selections.forEach(sel => {
+        const option = document.createElement("option");
+        option.value = `${sel.id}:${sel.division}`;
+        option.textContent = `${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)}`;
+        els.manualSelectionSelect.appendChild(option);
+      });
+
+      if (currentValue && [...els.manualSelectionSelect.options].some(opt => opt.value === currentValue)) {
+        els.manualSelectionSelect.value = currentValue;
+      }
+    }
+
+    function findSelectionByBundleKey(bundleKey) {
+      return state.selections.find(sel => `${sel.id}:${sel.division}` === bundleKey) || null;
+    }
+
+    function extractClassifierEntries(payload) {
+      const direct = findArrayDeep(payload, ["data", "items", "classifiers", "results"]);
+      if (Array.isArray(direct) && direct.length) return direct;
+      if (payload && typeof payload === "object") return [payload];
+      return [];
+    }
+
+    async function resolveClassifierDivisionInfo(classifierCode, division) {
+      const payload = await fetchJson(`https://hitfacto.rs/v1/classifiers/${encodeURIComponent(classifierCode)}`);
+      const entries = extractClassifierEntries(payload)
+        .map(row => ({
+          ...row,
+          division: normalizeDivision(row.division),
+          hhfValue: Number(row.hhf_value)
+        }))
+        .filter(row => row.division === normalizeDivision(division) && Number.isFinite(row.hhfValue));
+
+      const match = entries[0] || null;
+      if (!match) {
+        throw new Error(`No classifier HHF found for ${classifierCode} in ${formatDivisionLabel(division)}.`);
+      }
+      return match;
+    }
+
+    async function addManualClassifier() {
+      const bundleKey = els.manualSelectionSelect?.value || "";
+      const selection = findSelectionByBundleKey(bundleKey);
+      if (!selection) return flashStatus("Choose a shooter/division to add the provisional score to.", "error");
+
+      const classifierCode = String(els.manualClassifierCode?.value || "").trim().toUpperCase();
+      const hitfactor = Number(els.manualHitfactor?.value);
+      const inputDate = els.manualClassifierDate?.value || new Date().toISOString().slice(0, 10);
+
+      if (!classifierCode) return flashStatus("Enter a classifier code like 03-02.", "error");
+      if (!Number.isFinite(hitfactor) || hitfactor < 0) return flashStatus("Enter a valid hit factor.", "error");
+
+      setLoading(true, "Calculating provisional score...");
+      try {
+        const classifierInfo = await resolveClassifierDivisionInfo(classifierCode, selection.division);
+        const hhfPct = (hitfactor / classifierInfo.hhfValue) * 100;
+        const manualDate = new Date(`${inputDate}T12:00:00`);
+        if (Number.isNaN(manualDate.getTime())) throw new Error("Enter a valid date for the provisional score.");
+
+        const nextIdx = (selection.classifiers || []).reduce((max, row) => Math.max(max, Number(row.idx) || 0), 0) + 1;
+        const manualRow = {
+          shooterId: selection.id,
+          shooterName: selection.name,
+          division: normalizeDivision(selection.division),
+          date: manualDate,
+          hhfPct: Math.max(0, hhfPct),
+          code: classifierCode,
+          classifierName: classifierInfo.name || classifierInfo.title || classifierCode,
+          matchName: `Provisional manual score · HF ${hitfactor.toFixed(2)}`,
+          idx: nextIdx + 1000000,
+          isManual: true,
+          manualHitfactor: hitfactor,
+          hhfValue: classifierInfo.hhfValue
+        };
+
+        selection.classifiers = [...(selection.classifiers || []), manualRow]
+          .sort((a, b) => a.date - b.date || a.idx - b.idx);
+        selection.rankingHistory = computeRollingRankings(selection.classifiers);
+
+        const cacheKey = `${selection.id}:${selection.division}`;
+        state.cache.set(cacheKey, selection);
+
+        els.manualClassifierCode.value = "";
+        els.manualHitfactor.value = "";
+        flashStatus(`Added provisional ${classifierCode} at ${hhfPct.toFixed(2)}% to ${normalizeDisplayName(selection.name)} · ${formatDivisionLabel(selection.division)}.`, "ok");
+        render();
+      } catch (error) {
+        console.error(error);
+        flashStatus(String(error.message || error), "error");
+      } finally {
+        setLoading(false, "Loaded");
+      }
     }
 
     function buildShareUrl() {
@@ -1255,11 +1367,11 @@
     }
 
     function buildSvg() {
-      const width = els.chartContainer.clientWidth || window.innerWidth - 24;
+      const width = els.chartContainer.clientWidth || window.innerWidth - 32;
       const height = state.chartHeight || Math.max(420, window.innerHeight - 32);
       const isMobile = window.innerWidth <= 760;
       const margin = isMobile
-        ? { top: 12, right: 28, bottom: 66, left: 50 }
+        ? { top: 12, right: 32, bottom: 66, left: 42 }
         : { top: 20, right: 64, bottom: 60, left: 68 };
       const svg = d3.create("svg")
         .attr("viewBox", `0 0 ${width} ${height}`)
@@ -1452,7 +1564,7 @@
       svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
         .call(d3.axisLeft(y).ticks(6));
       svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
-      svg.append("text").attr("transform", `translate(${window.innerWidth <= 760 ? 12 : 18}, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text(window.innerWidth <= 760 ? "ELO" : "ELO rating");
+      svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("ELO rating");
 
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
 
@@ -1517,12 +1629,12 @@
         .call(d3.axisLeft(y).ticks(6).tickFormat(d => `${d}%`));
       drawRightClassAxis(svg, y, width, margin);
       svg.append("text").attr("x", width / 2).attr("y", height - (window.innerWidth <= 760 ? 10 : 18)).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text("Date");
-      svg.append("text").attr("transform", `translate(${window.innerWidth <= 760 ? 12 : 18}, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").attr("font-size", window.innerWidth <= 760 ? "10px" : "12px").text(window.innerWidth <= 760 ? "HHF % / Rank %" : "Classifier HHF % / Calculated USPSA ranking %");
+      svg.append("text").attr("transform", `translate(18, ${height / 2}) rotate(-90)`).attr("text-anchor", "middle").text("Classifier HHF % / Calculated USPSA ranking %");
 
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
       const targetNotes = state.selections.map(sel => ({
         key: seriesKey(sel),
-        note: requiredAverageForNextClass(sel, state.targetClassifierCount)
+        note: requiredAverageForNextClass(sel.classifiers || [], sel.rankingHistory || [], state.targetClassifierCount)
       }));
 
       series.forEach(serie => {
@@ -1679,21 +1791,9 @@
     }
 
     let resizeTimer = null;
-    let lastResizeWidth = window.innerWidth;
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        const widthChanged = window.innerWidth !== lastResizeWidth;
-        const isMobile = window.innerWidth <= 760;
-        lastResizeWidth = window.innerWidth;
-
-        if (isMobile && !widthChanged) {
-          return;
-        }
-
-        initChartHeight(widthChanged);
-        render();
-      }, 80);
+      resizeTimer = setTimeout(() => { initChartHeight(); render(); }, 80);
     });
 
     initControls();
