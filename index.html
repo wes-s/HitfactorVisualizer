@@ -352,7 +352,10 @@
       const years = d3.timeYear.range(
         d3.timeYear.floor(minDate),
         d3.timeYear.offset(d3.timeYear.ceil(maxDate), 1)
-      );
+      ).filter(d => {
+        const xPos = x(d);
+        return xPos >= margin.left && xPos <= x.range()[1];
+      });
 
       svg.append("g")
         .selectAll("line.year-sep")
@@ -596,7 +599,7 @@
       initChartHeight();
     }
 
-    function initChartHeight() {
+    function initChartHeight(force = false) {
       const chartCard = document.querySelector(".chart-card");
       const chartCardRect = chartCard.getBoundingClientRect();
       const toolbar = chartCard.querySelector(".toolbar");
@@ -604,9 +607,29 @@
       const toolbarH = toolbar ? toolbar.getBoundingClientRect().height : 0;
       const toggleH = toggleRow ? toggleRow.getBoundingClientRect().height : 0;
       const legendH = Math.max(36, els.legend.getBoundingClientRect().height || 36);
-      const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-      const cardVerticalPadding = window.innerWidth <= 760 ? 28 : 44;
-      const minHeight = window.innerWidth <= 760 ? 360 : 420;
+      const isMobile = window.innerWidth <= 760;
+
+      if (isMobile) {
+        const stableViewportHeight = Math.max(
+          window.screen?.height || 0,
+          window.innerHeight || 0,
+          document.documentElement.clientHeight || 0
+        );
+        const reserved = toolbarH + toggleH + legendH + 120;
+        const mobileHeight = Math.max(320, Math.min(520, stableViewportHeight - reserved));
+        if (force || !Number.isFinite(state.chartHeight) || Math.abs(mobileHeight - state.chartHeight) > 120) {
+          state.chartHeight = mobileHeight;
+        }
+        els.chartContainer.style.height = `${state.chartHeight}px`;
+
+        const bottomControls = document.querySelector(".bottom-controls");
+        if (bottomControls) bottomControls.style.marginTop = "8px";
+        return;
+      }
+
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const cardVerticalPadding = 44;
+      const minHeight = 420;
       const available = viewportHeight - chartCardRect.top - toolbarH - toggleH - legendH - cardVerticalPadding;
       state.chartHeight = Math.max(minHeight, available);
       els.chartContainer.style.height = `${state.chartHeight}px`;
@@ -844,18 +867,23 @@
       ) || null;
     }
 
-    function requiredAverageForNextClass(classifiers, rankingHistory, nToAdd = 4) {
+    function requiredAverageForNextClass(sel, nToAdd = 4) {
+      const classifiers = sel.classifiers || [];
+      const rankingHistory = sel.rankingHistory || [];
       const currentState = computeCurrentBestSixWindow(classifiers);
       const current = currentState.currentRanking;
       const peakRanking = (rankingHistory && rankingHistory.length) ? d3.max(rankingHistory, d => d.ranking) : current;
       const peakClass = getCurrentClassification(peakRanking);
       const currentPctClass = getCurrentClassification(current);
-      const next = getNextClassificationThresholdFromClass(peakClass || "U");
+      const officialCurrentClass = sel.currentClassification || null;
+      const baseClass = officialCurrentClass || currentPctClass || "U";
+      const next = getNextClassificationThresholdFromClass(baseClass);
 
       if (!next) {
         return {
           currentRanking: current,
           currentPctClass,
+          currentOfficialClass: officialCurrentClass,
           peakRanking,
           peakClass,
           nextClass: null,
@@ -863,7 +891,7 @@
         };
       }
 
-      const baseScores = currentState.bestSix.map(d => d.hhfPct).sort((a, b) => b - a);
+      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
       const n = Math.max(1, Number(nToAdd) || 1);
 
       let lo = 0;
@@ -872,7 +900,7 @@
 
       for (let i = 0; i < 40; i++) {
         const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(mid)).sort((a, b) => b - a).slice(0, 6);
+        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
         const avg = d3.mean(combined);
         if (avg >= next.threshold) {
           feasible = true;
@@ -885,6 +913,7 @@
       return {
         currentRanking: current,
         currentPctClass,
+        currentOfficialClass: officialCurrentClass,
         peakRanking,
         peakClass,
         nextClass: next.label,
@@ -1075,17 +1104,32 @@
     async function loadShooterDivisionBundle(selection) {
       const key = `${selection.id}:${selection.division}`;
       if (state.cache.has(key)) return state.cache.get(key);
-      const [eloPayload, classifierPayload] = await Promise.all([
+      const [eloPayload, classifierPayload, matchPayload] = await Promise.all([
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/elo`),
-        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`)
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
+        fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches`)
       ]);
       const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
+      const targetDivision = normalizeDivision(selection.division);
+
+      const latestDivisionMatch = findArrayDeep(matchPayload, ["data"])
+        .map(row => ({
+          ...row,
+          division: normalizeDivision(row.division),
+          matchDate: row.match_date ? new Date(row.match_date) : parseDateValue(row)
+        }))
+        .filter(row => row.matchDate && row.division === targetDivision)
+        .sort((a, b) => b.matchDate - a.matchDate)[0] || null;
+
+      const currentClassification = latestDivisionMatch?.classification || null;
+
       const bundle = {
         ...selection,
-        division: normalizeDivision(selection.division),
+        division: targetDivision,
         eloHistory: parseEloHistory(eloPayload, selection, selection.division),
         classifiers: fullClassifierHistory,
-        rankingHistory: computeRollingRankings(fullClassifierHistory)
+        rankingHistory: computeRollingRankings(fullClassifierHistory),
+        currentClassification
       };
       state.cache.set(key, bundle);
       return bundle;
@@ -1192,7 +1236,7 @@
     }
 
     async function resolveClassifierDivisionInfo(classifierCode, division) {
-      const payload = await fetchJson(`https://hitfacto.rs/v1/classifiers/${encodeURIComponent(classifierCode)}`);
+      const payload = await fetchJson(`${API_BASE}/v1/classifiers/${encodeURIComponent(classifierCode)}`);
       const entries = extractClassifierEntries(payload)
         .map(row => ({
           ...row,
@@ -1222,7 +1266,15 @@
 
       setLoading(true, "Calculating provisional score...");
       try {
-        const classifierInfo = await resolveClassifierDivisionInfo(classifierCode, selection.division);
+        let classifierInfo;
+        try {
+          classifierInfo = await resolveClassifierDivisionInfo(classifierCode, selection.division);
+        } catch (error) {
+          console.error(error);
+          flashStatus(`Failed to load classifier HHF for ${classifierCode} in ${formatDivisionLabel(selection.division)}.`, "error");
+          return;
+        }
+
         const hhfPct = (hitfactor / classifierInfo.hhfValue) * 100;
         const manualDate = new Date(`${inputDate}T12:00:00`);
         if (Number.isNaN(manualDate.getTime())) throw new Error("Enter a valid date for the provisional score.");
@@ -1634,7 +1686,7 @@
       const rankLine = d3.line().defined(d => d.ranking !== null).x(d => x(d.date)).y(d => y(Math.max(0, d.ranking)));
       const targetNotes = state.selections.map(sel => ({
         key: seriesKey(sel),
-        note: requiredAverageForNextClass(sel.classifiers || [], sel.rankingHistory || [], state.targetClassifierCount)
+        note: requiredAverageForNextClass(sel, state.targetClassifierCount)
       }));
 
       series.forEach(serie => {
@@ -1791,9 +1843,21 @@
     }
 
     let resizeTimer = null;
+    let lastResizeWidth = window.innerWidth;
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => { initChartHeight(); render(); }, 80);
+      resizeTimer = setTimeout(() => {
+        const widthChanged = window.innerWidth !== lastResizeWidth;
+        const isMobile = window.innerWidth <= 760;
+        lastResizeWidth = window.innerWidth;
+
+        if (isMobile && !widthChanged) {
+          return;
+        }
+
+        initChartHeight(widthChanged);
+        render();
+      }, 80);
     });
 
     initControls();
