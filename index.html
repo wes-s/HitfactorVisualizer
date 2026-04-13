@@ -1292,6 +1292,7 @@
         flashStatus(`Added ${normalizeDisplayName(bundle.name)} · ${formatDivisionLabel(bundle.division)}.`, "ok");
       } catch (error) {
         console.error(error);
+        if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
         flashStatus(String(error.message || error), "error");
       } finally {
         setLoading(false, "Loaded");
@@ -1552,6 +1553,7 @@
         render();
       } catch (error) {
         console.error(error);
+        if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
         flashStatus(String(error.message || error), "error");
       } finally {
         setLoading(false, "Loaded");
@@ -1735,6 +1737,9 @@
       empty.className = "empty";
       empty.textContent = message;
       els.chartContainer.appendChild(empty);
+      if (els.chartLoadingOverlay) {
+        els.chartLoadingOverlay.style.display = "none";
+      }
       if (els.whatIfPanel) {
         els.whatIfPanel.style.display = "none";
         els.whatIfPanel.innerHTML = "";
@@ -1914,6 +1919,7 @@
       });
 
       els.chartContainer.appendChild(svg.node());
+      if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
     }
 
     function drawClassifierTab() {
@@ -2087,6 +2093,7 @@
 
 
       els.chartContainer.appendChild(svg.node());
+      if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";node());
       renderWhatIfPanel(targetNotes, color);
     }
 
