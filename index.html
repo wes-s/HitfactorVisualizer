@@ -703,6 +703,34 @@
       return null;
     }
 
+    function pickNumberDeep(row, candidates) {
+      const direct = pickNumber(row, candidates);
+      if (direct !== null) return direct;
+      if (!row || typeof row !== "object") return null;
+
+      for (const value of Object.values(row)) {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          const nested = pickNumber(value, candidates);
+          if (nested !== null) return nested;
+        }
+      }
+      return null;
+    }
+
+    function extractClassifierHitFactor(row) {
+      return pickNumberDeep(row, [
+        "hit_factor","hitfactor","hf","hitFactor","score_hf","stage_hf",
+        "hit_factor_score","scored_hit_factor","hitFactorScore","factor",
+        "score","points_factor"
+      ]);
+    }
+
+    function extractClassifierHHFValue(row) {
+      return pickNumberDeep(row, [
+        "hhf","hhf_value","high_hit_factor","highHitFactor","hhfValue"
+      ]);
+    }
+
     function fuzzyScore(query, candidate) {
       const q = query.toLowerCase();
       const c = candidate.toLowerCase();
@@ -742,17 +770,28 @@
     function parseClassifiers(payload, shooterMeta, division) {
       const rows = findArrayDeep(payload, ["classifiers","scores","history","items"]);
       const targetDivision = normalizeDivision(division);
-      return rows.map((row, idx) => ({
-        shooterId: shooterMeta.id,
-        shooterName: shooterMeta.name,
-        division: normalizeDivision(row.division || division),
-        date: parseDateValue(row),
-        hhfPct: pickNumber(row, ["hhf_pct","hhfPercent","percentage","pct"]),
-        code: String(row.code || row.classifier_code || row.classifier || row.stage_code || row.name || `classifier_${idx}`),
-        classifierName: row.classifier_name || row.name || row.title || "",
-        matchName: row.match_name || row.event_name || "",
-        idx
-      })).filter(d => d.date && d.hhfPct !== null && d.division === targetDivision)
+      return rows.map((row, idx) => {
+        const hhfPct = pickNumber(row, ["hhf_pct","hhfPercent","percentage","pct"]);
+        const hitfactor = extractClassifierHitFactor(row);
+        const hhfValue = extractClassifierHHFValue(row);
+        const derivedHitfactor = Number.isFinite(hitfactor)
+          ? hitfactor
+          : (Number.isFinite(hhfPct) && Number.isFinite(hhfValue) ? (hhfPct * hhfValue / 100) : null);
+
+        return {
+          shooterId: shooterMeta.id,
+          shooterName: shooterMeta.name,
+          division: normalizeDivision(row.division || division),
+          date: parseDateValue(row),
+          hhfPct,
+          hitfactor: derivedHitfactor,
+          hhfValue,
+          code: String(row.code || row.classifier_code || row.classifier || row.stage_code || row.name || `classifier_${idx}`),
+          classifierName: row.classifier_name || row.name || row.title || "",
+          matchName: row.match_name || row.event_name || "",
+          idx
+        };
+      }).filter(d => d.date && d.hhfPct !== null && d.division === targetDivision)
         .sort((a, b) => a.date - b.date || a.idx - b.idx);
     }
 
@@ -1930,7 +1969,7 @@
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
               const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${Number.isFinite(d.hitfactor) ? `<br>HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
