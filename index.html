@@ -105,15 +105,7 @@
       overflow: hidden;
       grid-row: 4;
     }
-    .chart-loading-overlay {
-      position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
-      background: rgba(2,6,23,0.22); z-index: 15; pointer-events: none;
-    }
-    .chart-spinner {
-      width: 36px; height: 36px; border-radius: 999px; border: 3px solid rgba(255,255,255,0.22);
-      border-top-color: rgba(255,255,255,0.92); animation: chart-spin 0.8s linear infinite;
-    }
-    @keyframes chart-spin { to { transform: rotate(360deg); } }
+}
     .swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
     .bottom-controls { display: grid; gap: 14px; margin-top: 8px; }
     .controls-grid { display: grid; grid-template-columns: 1fr 1fr auto auto auto; gap: 12px; align-items: end; }
@@ -246,10 +238,11 @@
     <div class="card chart-card">
       <div class="toolbar">
         <div class="left-tools tab-strip">
-          <button class="tab-btn" data-tab="classifiers">Classifiers</button>
-          <button class="tab-btn active" data-tab="elo">ELO History</button>
+          <button class="tab-btn active" data-tab="classifiers">Classifiers</button>
+          <button class="tab-btn" data-tab="elo">ELO History</button>
         </div>
         <div class="right-tools">
+          <div id="loadingState" class="pill">Loaded</div>
           <button id="shareBtn" class="ghost">Share view</button>
         </div>
       </div>
@@ -263,7 +256,7 @@
 
       <div id="whatIfPanel" class="whatif-panel" style="display:none;"></div>
 
-      <div id="chartContainer" class="chart-wrap"><div id="chartLoadingOverlay" class="chart-loading-overlay" style="display:none;"><div class="chart-spinner" aria-hidden="true"></div></div></div>
+      <div id="chartContainer" class="chart-wrap"></div>
       <div id="legend" class="legend"></div>
     </div>
 
@@ -522,7 +515,7 @@
     ].sort((a, b) => formatDivisionLabel(a).localeCompare(formatDivisionLabel(b)));
 
     const state = {
-      activeTab: "elo",
+      activeTab: "classifiers",
       startDate: "",
       endDate: "",
       selections: [],
@@ -549,6 +542,7 @@
       clearDatesBtn: document.getElementById("clearDatesBtn"),
       clearSelectionsBtn: document.getElementById("clearSelectionsBtn"),
       shareBtn: document.getElementById("shareBtn"),
+      loadingState: document.getElementById("loadingState"),
       chartContainer: document.getElementById("chartContainer"),
       statusText: document.getElementById("statusText"),
       selectionPills: document.getElementById("selectionPills"),
@@ -564,8 +558,7 @@
       manualHitfactor: document.getElementById("manualHitfactor"),
       manualClassifierDate: document.getElementById("manualClassifierDate"),
       addManualClassifierBtn: document.getElementById("addManualClassifierBtn"),
-      manualScorePills: document.getElementById("manualScorePills"),
-      chartLoadingOverlay: document.getElementById("chartLoadingOverlay")
+      manualScorePills: document.getElementById("manualScorePills")
     };
 
     function initControls() {
@@ -578,6 +571,7 @@
       els.divisionSelect.value = "carry_optics";
 
       document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.tab === state.activeTab);
         btn.addEventListener("click", () => {
           state.activeTab = btn.dataset.tab;
           document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
@@ -719,9 +713,10 @@
       els.statusText.className = ["status-text", kind].filter(Boolean).join(" ");
     }
 
-    function setLoading(isLoading, label = "") {
-      if (els.chartLoadingOverlay) {
-        els.chartLoadingOverlay.style.display = isLoading ? "flex" : "none";
+    function setLoading(isLoading, label = "Loaded") {
+      if (els.loadingState) {
+        els.loadingState.textContent = label || (isLoading ? "Loading..." : "Loaded");
+        els.loadingState.style.background = isLoading ? "linear-gradient(180deg, #7c3aed, #5b21b6)" : "rgba(255,255,255,0.06)";
       }
       els.addShooterBtn.disabled = isLoading;
       if (els.addManualClassifierBtn) els.addManualClassifierBtn.disabled = isLoading;
@@ -1292,7 +1287,6 @@
         flashStatus(`Added ${normalizeDisplayName(bundle.name)} · ${formatDivisionLabel(bundle.division)}.`, "ok");
       } catch (error) {
         console.error(error);
-        if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
         flashStatus(String(error.message || error), "error");
       } finally {
         setLoading(false, "Loaded");
@@ -1553,7 +1547,6 @@
         render();
       } catch (error) {
         console.error(error);
-        if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
         flashStatus(String(error.message || error), "error");
       } finally {
         setLoading(false, "Loaded");
@@ -1668,9 +1661,6 @@
 
     function clearChart() {
       els.chartContainer.innerHTML = "";
-      if (els.chartLoadingOverlay) {
-        els.chartContainer.appendChild(els.chartLoadingOverlay);
-      }
       els.legend.innerHTML = "";
       els.chartContainer.style.height = `${state.chartHeight}px`;
       if (els.whatIfPanel) {
@@ -1733,9 +1723,6 @@
 
     function showEmpty(message) {
       clearChart();
-      if (els.chartLoadingOverlay) {
-        els.chartLoadingOverlay.style.display = "none";
-      }
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent = message;
@@ -1919,7 +1906,6 @@
       });
 
       els.chartContainer.appendChild(svg.node());
-      if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
     }
 
     function drawClassifierTab() {
@@ -2093,7 +2079,6 @@
 
 
       els.chartContainer.appendChild(svg.node());
-      if (els.chartLoadingOverlay) els.chartLoadingOverlay.style.display = "none";
       renderWhatIfPanel(targetNotes, color);
     }
 
@@ -2103,19 +2088,9 @@
         els.whatIfPanel.style.display = "none";
         els.whatIfPanel.innerHTML = "";
       }
-
-      if (!state.selections.length) {
-        showEmpty("Add at least one shooter/division pair to begin.");
-        setLoading(false);
-        return;
-      }
-
-      try {
-        if (state.activeTab === "elo") drawEloTab();
-        if (state.activeTab === "classifiers") drawClassifierTab();
-      } finally {
-        setLoading(false);
-      }
+      if (!state.selections.length) return showEmpty("Add at least one shooter/division pair to begin.");
+      if (state.activeTab === "elo") drawEloTab();
+      if (state.activeTab === "classifiers") drawClassifierTab();
     }
 
     async function hydrateSharedSelections() {
