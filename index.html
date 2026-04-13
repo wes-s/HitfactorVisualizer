@@ -847,6 +847,15 @@
       return sorted.filter((row, i) => latestIndexByCode.get(row.code) !== i);
     }
 
+    function isCurrentCalcPoint(classifiers, row) {
+      const currentState = computeCurrentBestSixWindow(classifiers);
+      return (currentState.bestSix || []).some(item =>
+        item.code === row.code &&
+        item.idx === row.idx &&
+        item.date.getTime() === row.date.getTime()
+      );
+    }
+
     function computeClassifierCalcState(classifiers) {
       const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
 
@@ -1898,6 +1907,19 @@
             .attr("stroke-width", 2)
             .style("pointer-events", "none");
 
+          const currentCalcRows = (computeCurrentBestSixWindow(serie.classifiers).bestSix || []);
+
+          svg.append("g").selectAll("circle.current-calc").data(currentCalcRows).join("circle")
+            .attr("class", "current-calc")
+            .attr("cx", d => x(d.date))
+            .attr("cy", d => y(d.hhfPct))
+            .attr("r", 5.5)
+            .attr("fill", "rgba(255,255,255,0.18)")
+            .attr("stroke", color(serie.key))
+            .attr("stroke-width", 1)
+            .attr("opacity", 0.9)
+            .style("pointer-events", "none");
+
           svg.append("g").selectAll("circle.classifier").data(serie.classifiers).join("circle")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
@@ -1908,7 +1930,8 @@
             .attr("opacity", 0.72)
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}<br>HF: ${Number.isFinite(d.hitfactor) ? d.hitfactor.toFixed(2) : (Number.isFinite(d.manualHitfactor) ? d.manualHitfactor.toFixed(2) : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
