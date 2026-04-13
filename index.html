@@ -283,6 +283,7 @@
       </div>
 
             <div id="selectionPills" class="selection-pills"></div>
+      <div id="statusText" class="status-text" style="display:none;" aria-live="polite"></div>
 
       <div class="date-grid">
         <div class="date-field">
@@ -709,8 +710,10 @@
     }
 
     function flashStatus(message, kind = "") {
-      els.statusText.textContent = message;
+      if (!els.statusText) return;
+      els.statusText.textContent = message || "";
       els.statusText.className = ["status-text", kind].filter(Boolean).join(" ");
+      els.statusText.style.display = message ? "block" : "none";
     }
 
     function setLoading(isLoading, label = "Loaded") {
@@ -1263,14 +1266,20 @@
     async function addShooterSelection() {
       const query = els.shooterInput.value.trim();
       const division = normalizeDivision(els.divisionSelect.value);
-      if (!query) return flashStatus("Enter a shooter name.", "error");
+      if (!query) {
+        flashStatus("Enter a shooter name.", "error");
+        return;
+      }
 
       setLoading(true, "Resolving shooter...");
       flashStatus("Resolving shooter and loading selected division...");
       try {
         const shooter = await resolveShooter(query);
         const duplicate = state.selections.find(sel => String(sel.id) === String(shooter.id) && sel.division === division);
-        if (duplicate) return flashStatus("That shooter/division pair is already loaded.", "error");
+        if (duplicate) {
+          flashStatus("That shooter/division pair is already loaded.", "error");
+          return;
+        }
 
         const selection = {
           id: shooter.id,
