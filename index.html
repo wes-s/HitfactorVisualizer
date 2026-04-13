@@ -748,7 +748,6 @@
         division: normalizeDivision(row.division || division),
         date: parseDateValue(row),
         hhfPct: pickNumber(row, ["hhf_pct","hhfPercent","percentage","pct"]),
-        hitfactor: pickNumber(row, ["hit_factor","hitfactor","hf","hitFactor","score_hf","stage_hf"]),
         code: String(row.code || row.classifier_code || row.classifier || row.stage_code || row.name || `classifier_${idx}`),
         classifierName: row.classifier_name || row.name || row.title || "",
         matchName: row.match_name || row.event_name || "",
@@ -1364,6 +1363,7 @@
       const cacheKey = `${selection.id}:${selection.division}`;
       state.cache.set(cacheKey, selection);
       renderManualScorePills();
+      syncUrlState(true);
       render();
       flashStatus(`Removed provisional ${rowToRemove.code} from ${normalizeDisplayName(selection.name)} · ${formatDivisionLabel(selection.division)}.`, "ok");
     }
@@ -1655,7 +1655,8 @@
 
         const officialClass = entry.note.currentOfficialClass || "Unknown";
         const calcClass = entry.note.currentPctClass || "U";
-        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${calcClass})<br>Official: ${officialClass}`;
+        const usingClass = entry.note.effectiveCurrentClass || calcClass || officialClass || "U";
+        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${calcClass})<br>Official: ${officialClass}<br>Current calc: ${calcClass}<br>Target basis: ${usingClass}`;
 
         if (!entry.note.nextClass) {
           box.innerHTML = `${summaryPrefix}<br>Already at top class.`;
@@ -1907,7 +1908,7 @@
             .attr("opacity", 0.72)
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${Number.isFinite(d.hitfactor) ? `<br>HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
