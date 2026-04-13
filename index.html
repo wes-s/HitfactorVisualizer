@@ -1733,13 +1733,13 @@
 
     function showEmpty(message) {
       clearChart();
+      if (els.chartLoadingOverlay) {
+        els.chartLoadingOverlay.style.display = "none";
+      }
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent = message;
       els.chartContainer.appendChild(empty);
-      if (els.chartLoadingOverlay) {
-        els.chartLoadingOverlay.style.display = "none";
-      }
       if (els.whatIfPanel) {
         els.whatIfPanel.style.display = "none";
         els.whatIfPanel.innerHTML = "";
@@ -2103,9 +2103,19 @@
         els.whatIfPanel.style.display = "none";
         els.whatIfPanel.innerHTML = "";
       }
-      if (!state.selections.length) return showEmpty("Add at least one shooter/division pair to begin.");
-      if (state.activeTab === "elo") drawEloTab();
-      if (state.activeTab === "classifiers") drawClassifierTab();
+
+      if (!state.selections.length) {
+        showEmpty("Add at least one shooter/division pair to begin.");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        if (state.activeTab === "elo") drawEloTab();
+        if (state.activeTab === "classifiers") drawClassifierTab();
+      } finally {
+        setLoading(false);
+      }
     }
 
     async function hydrateSharedSelections() {
