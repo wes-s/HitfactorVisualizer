@@ -1664,8 +1664,7 @@
 
         const officialClass = entry.note.currentOfficialClass || "Unknown";
         const calcClass = entry.note.currentPctClass || "U";
-        const usingClass = entry.note.effectiveCurrentClass || calcClass || officialClass || "U";
-        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${calcClass})<br>Official: ${officialClass}<br>Current calc: ${calcClass}<br>Target basis: ${usingClass}`;
+        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${calcClass})<br>Official: ${officialClass}`;
 
         if (!entry.note.nextClass) {
           box.innerHTML = `${summaryPrefix}<br>Already at top class.`;
@@ -1913,7 +1912,7 @@
             .attr("class", "current-calc")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
-            .attr("r", 5.5)
+            .attr("r", 7)
             .attr("fill", "rgba(255,255,255,0.18)")
             .attr("stroke", color(serie.key))
             .attr("stroke-width", 1)
@@ -1931,7 +1930,7 @@
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
               const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}<br>HF: ${Number.isFinite(d.hitfactor) ? d.hitfactor.toFixed(2) : (Number.isFinite(d.manualHitfactor) ? d.manualHitfactor.toFixed(2) : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${Number.isFinite(d.hitfactor) ? `<br>HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
