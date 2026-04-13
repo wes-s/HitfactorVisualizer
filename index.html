@@ -40,13 +40,27 @@
       display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
     }
     .legend { grid-row: 5; }
-    .toolbar { justify-content: space-between; }
-    .toggle-row { gap: 18px; color: var(--muted); font-size: 14px; padding: 0 2px 2px 2px; }
-    .toggle-row label {
-      display: inline-flex; align-items: center; gap: 8px; margin: 0;
+    .toolbar { justify-content: space-between; align-items: flex-end; }
+    .tab-strip { gap: 0; align-items: flex-end; }
+    .toggle-row { gap: 14px 18px; color: var(--muted); font-size: 14px; padding: 0 2px 2px 2px; }
+    .switch-label {
+      display: inline-flex; align-items: center; gap: 10px; margin: 0;
       font-size: 14px; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); cursor: pointer;
     }
-    .toggle-row input[type="checkbox"] { width: auto; margin: 0; accent-color: #2563eb; }
+    .switch-label input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch-ui {
+      width: 42px; height: 24px; border-radius: 999px; position: relative; display: inline-block;
+      background: rgba(255,255,255,0.14); border: 1px solid var(--border); transition: 0.18s ease;
+      flex: 0 0 auto;
+    }
+    .switch-ui::after {
+      content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px;
+      border-radius: 999px; background: #e5e7eb; transition: 0.18s ease;
+    }
+    .switch-label input:checked + .switch-ui {
+      background: rgba(37,99,235,0.5); border-color: rgba(96,165,250,0.7);
+    }
+    .switch-label input:checked + .switch-ui::after { transform: translateX(18px); background: #ffffff; }
     .tab-btn, button {
       border: 1px solid var(--border);
       border-radius: 999px;
@@ -56,6 +70,14 @@
       font: inherit;
       font-weight: 700;
       cursor: pointer;
+    }
+    .tab-btn {
+      border-radius: 14px 14px 0 0;
+      border-bottom-color: transparent;
+      background: rgba(255,255,255,0.06);
+      padding: 12px 16px;
+      position: relative;
+      top: 1px;
     }
     .tab-btn.active { background: linear-gradient(180deg, #16a34a, #166534); }
     button.primary { background: linear-gradient(180deg, #2563eb, #1d4ed8); }
@@ -83,16 +105,33 @@
       overflow: hidden;
       grid-row: 4;
     }
+    .chart-loading-overlay {
+      position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(2,6,23,0.22); z-index: 15; pointer-events: none;
+    }
+    .chart-spinner {
+      width: 36px; height: 36px; border-radius: 999px; border: 3px solid rgba(255,255,255,0.22);
+      border-top-color: rgba(255,255,255,0.92); animation: chart-spin 0.8s linear infinite;
+    }
+    @keyframes chart-spin { to { transform: rotate(360deg); } }
     .swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
     .bottom-controls { display: grid; gap: 14px; margin-top: 8px; }
     .controls-grid { display: grid; grid-template-columns: 1fr 1fr auto auto auto; gap: 12px; align-items: end; }
-    .add-grid { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 12px; align-items: end; }
+    .add-grid { display: grid; grid-template-columns: 1.15fr 0.7fr auto; gap: 12px; align-items: end; }
+    .top-add-grid { grid-template-columns: minmax(0, 1fr) minmax(140px, 0.48fr) auto; }
+    .date-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: end; }
+    .date-grid > div, .target-row > div, .manual-grid > div, .top-add-grid > div, .add-grid > div { min-width: 0; }
+    .date-action-row { display: flex; gap: 12px; flex-wrap: nowrap; }
+    .date-action-row button { flex: 0 0 auto; }
+    .target-row { display: grid; grid-template-columns: minmax(180px, 320px); gap: 12px; align-items: end; }
+    .manual-add-btn-wrap { display: flex; align-items: end; }
+    .manual-add-btn-wrap button { min-width: 132px; }
     label {
       display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
       text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
     }
     input, select {
-      width: 100%; border-radius: 12px; border: 1px solid var(--border);
+      width: 100%; max-width: 100%; min-width: 0; border-radius: 12px; border: 1px solid var(--border);
       background: var(--panel-2); color: var(--text); padding: 11px 12px; font: inherit;
     }
     .status-text { min-height: 22px; color: var(--muted); }
@@ -131,11 +170,11 @@
     .axis path, .axis line { stroke: rgba(255,255,255,0.15); }
     .grid line { stroke: rgba(255,255,255,0.08); }
     .grid path { stroke: none; }
-    @media (max-width: 1080px) { .controls-grid, .add-grid, .manual-grid { grid-template-columns: 1fr 1fr !important; } }
+    @media (max-width: 1080px) { .controls-grid, .add-grid, .manual-grid, .date-grid { grid-template-columns: 1fr 1fr !important; } }
     @media (max-width: 760px) {
       .toolbar { align-items: stretch; }
       .left-tools, .right-tools { width: 100%; }
-      .controls-grid, .add-grid, .manual-grid { grid-template-columns: 1fr !important; }
+      .controls-grid, .add-grid, .manual-grid, .date-grid, .top-add-grid { grid-template-columns: 1fr !important; }
       .card { padding: 10px; border-radius: 14px; }
       .chart-card { grid-template-rows: auto auto auto 1fr auto; min-height: auto; gap: 8px; }
       .tab-btn, button { padding: 9px 12px; font-size: 14px; }
@@ -145,7 +184,7 @@
         gap: 10px 12px;
         align-items: center;
       }
-      .toggle-row label {
+      .switch-label {
         white-space: normal;
         min-width: 0;
         font-size: 13px;
@@ -158,15 +197,17 @@
         scrollbar-width: none;
       }
       .legend::-webkit-scrollbar { display: none; }
-      .legend-item, .selection-pill { flex: 0 0 auto; white-space: nowrap; }
+      .legend-item { flex: 0 0 auto; white-space: nowrap; }
       .selection-pills {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
+        display: grid;
+        gap: 8px;
       }
-      .selection-pills::-webkit-scrollbar { display: none; }
-      input, select { min-height: 44px; font-size: 16px; }
+      .selection-pill { width: 100%; white-space: normal; justify-content: space-between; }
+      .date-action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .target-row { grid-template-columns: minmax(120px, 180px); }
+      .manual-grid { grid-template-columns: 1fr !important; }
+      input, select { min-height: 44px; font-size: 16px; width: 100%; max-width: 100%; }
+      #manualClassifierCode, #manualHitfactor { font-variant-numeric: tabular-nums; }
       .tooltip { max-width: min(300px, calc(100vw - 28px)); font-size: 11px; }
       .whatif-panel { padding: 8px 10px; }
       .whatif-panel-content { grid-template-columns: 1fr; }
@@ -179,54 +220,30 @@
   <div class="app">
     <div class="card chart-card">
       <div class="toolbar">
-        <div class="left-tools">
+        <div class="left-tools tab-strip">
+          <button class="tab-btn" data-tab="classifiers">Classifiers</button>
           <button class="tab-btn active" data-tab="elo">ELO History</button>
-          <button class="tab-btn" data-tab="classifiers">Classifiers + USPSA Ranking</button>
         </div>
         <div class="right-tools">
-          <div id="loadingState" class="pill">Idle</div>
           <button id="shareBtn" class="ghost">Share view</button>
         </div>
       </div>
 
       <div class="toggle-row">
-        <label><input id="showPeakToggle" type="checkbox" /> Show peak line</label>
-        <label><input id="showPredictionToggle" type="checkbox" /> Show 12-month prediction</label>
-        <label><input id="showClassifierScoresToggle" type="checkbox" checked /> Show classifier scores</label>
-        <label><input id="showWhatIfToggle" type="checkbox" /> Show What-if</label>
+        <label class="switch-label"><input id="showPeakToggle" type="checkbox" checked /><span class="switch-ui"></span><span>Show Peak</span></label>
+        <label class="switch-label"><input id="showPredictionToggle" type="checkbox" checked /><span class="switch-ui"></span><span>Show Prediction</span></label>
+        <label class="switch-label"><input id="showClassifierScoresToggle" type="checkbox" /><span class="switch-ui"></span><span>Show Classifiers</span></label>
+        <label class="switch-label"><input id="showWhatIfToggle" type="checkbox" checked /><span class="switch-ui"></span><span>Show What-if</span></label>
       </div>
 
       <div id="whatIfPanel" class="whatif-panel" style="display:none;"></div>
 
-      <div id="chartContainer" class="chart-wrap"></div>
+      <div id="chartContainer" class="chart-wrap"><div id="chartLoadingOverlay" class="chart-loading-overlay" style="display:none;"><div class="chart-spinner" aria-hidden="true"></div></div></div>
       <div id="legend" class="legend"></div>
     </div>
 
     <div class="card bottom-controls">
-      <div class="controls-grid">
-        <div>
-          <label for="startDate">Beginning date</label>
-          <input id="startDate" type="date" />
-        </div>
-        <div>
-          <label for="endDate">End date</label>
-          <input id="endDate" type="date" />
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button id="refreshBtn">Recalculate</button>
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button id="clearDatesBtn" class="ghost">Clear dates</button>
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button id="clearSelectionsBtn" class="ghost">Clear shooters</button>
-        </div>
-      </div>
-
-      <div class="add-grid">
+      <div class="add-grid top-add-grid">
         <div>
           <label for="shooterInput">Shooter</label>
           <input id="shooterInput" type="text" placeholder="Type a shooter name" />
@@ -241,39 +258,57 @@
         </div>
       </div>
 
-      <div id="statusText" class="status-text">Add up to 5 shooter/division selections.</div>
-      <div id="selectionPills" class="selection-pills"></div>
+            <div id="selectionPills" class="selection-pills"></div>
 
-      <div class="controls-grid" style="grid-template-columns: 1fr auto;">
+      <div class="date-grid">
         <div>
-          <label for="targetClassifierCount">Next N classifiers for next class</label>
-          <input id="targetClassifierCount" type="number" min="1" step="1" value="4" />
+          <label for="startDate">Beginning date</label>
+          <input id="startDate" type="date" />
         </div>
         <div>
-          <label>&nbsp;</label>
-          <button id="recomputeTargetsBtn" class="ghost">Update target calc</button>
+          <label for="endDate">End date</label>
+          <input id="endDate" type="date" />
+        </div>
+      </div>
+
+      <div class="date-action-row">
+        <button id="clearDatesBtn" class="ghost">Clear dates</button>
+        <button id="clearSelectionsBtn" class="ghost">Clear shooters</button>
+      </div>
+
+      <div class="target-row">
+        <div>
+          <label for="targetClassifierCount">Calculate Scores Needed for Next Class</label>
+          <select id="targetClassifierCount">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+          </select>
         </div>
       </div>
 
       <div class="card" style="padding:12px;">
-        <div class="add-grid manual-grid" style="grid-template-columns: 1.35fr 0.8fr 0.8fr 0.9fr auto;">
+        <div class="add-grid manual-grid" style="grid-template-columns: minmax(0,1.15fr) minmax(110px,0.7fr) minmax(110px,0.7fr) minmax(150px,0.85fr) auto;">
           <div>
             <label for="manualSelectionSelect">Add provisional classifier to</label>
             <select id="manualSelectionSelect"></select>
           </div>
           <div>
             <label for="manualClassifierCode">Classifier code</label>
-            <input id="manualClassifierCode" type="text" placeholder="03-02" />
+            <input id="manualClassifierCode" type="text" placeholder="03-02" inputmode="numeric" pattern="[0-9-]*" maxlength="5" />
           </div>
           <div>
             <label for="manualHitfactor">Hit factor</label>
-            <input id="manualHitfactor" type="number" min="0" step="0.01" placeholder="5.32" />
+            <input id="manualHitfactor" type="number" min="0" step="0.01" placeholder="5.32" inputmode="decimal" />
           </div>
           <div>
             <label for="manualClassifierDate">Date</label>
             <input id="manualClassifierDate" type="date" />
           </div>
-          <div>
+          <div class="manual-add-btn-wrap">
             <label>&nbsp;</label>
             <button id="addManualClassifierBtn" class="primary">Add score</button>
           </div>
@@ -283,7 +318,6 @@
           <div id="manualScorePills" class="selection-pills"></div>
         </div>
       </div>
-
       <div class="footer-note">
         Peak lines are flat lines at the all-time peak value for that shooter/division metric, using full history and clipped by the visible date range. Provisional classifier scores are local to your current session and immediately update the ranking line and What-if calculation.
       </div>
@@ -464,10 +498,10 @@
       selections: [],
       cache: new Map(),
       chartHeight: null,
-      showPeak: false,
-      showPrediction: false,
-      showClassifierScores: true,
-      showWhatIf: false,
+      showPeak: true,
+      showPrediction: true,
+      showClassifierScores: false,
+      showWhatIf: true,
       focusedSeries: null,
       colorAssignments: new Map(),
       targetClassifierCount: 4,
@@ -482,14 +516,12 @@
       endDate: document.getElementById("endDate"),
       shooterInput: document.getElementById("shooterInput"),
       addShooterBtn: document.getElementById("addShooterBtn"),
-      refreshBtn: document.getElementById("refreshBtn"),
       clearDatesBtn: document.getElementById("clearDatesBtn"),
       clearSelectionsBtn: document.getElementById("clearSelectionsBtn"),
       shareBtn: document.getElementById("shareBtn"),
       chartContainer: document.getElementById("chartContainer"),
       statusText: document.getElementById("statusText"),
       selectionPills: document.getElementById("selectionPills"),
-      loadingState: document.getElementById("loadingState"),
       legend: document.getElementById("legend"),
       whatIfPanel: document.getElementById("whatIfPanel"),
       showPeakToggle: document.getElementById("showPeakToggle"),
@@ -497,14 +529,13 @@
       showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle"),
       showWhatIfToggle: document.getElementById("showWhatIfToggle"),
       targetClassifierCount: document.getElementById("targetClassifierCount"),
-      recomputeTargetsBtn: document.getElementById("recomputeTargetsBtn"),
       manualSelectionSelect: document.getElementById("manualSelectionSelect"),
       manualClassifierCode: document.getElementById("manualClassifierCode"),
       manualHitfactor: document.getElementById("manualHitfactor"),
       manualClassifierDate: document.getElementById("manualClassifierDate"),
       addManualClassifierBtn: document.getElementById("addManualClassifierBtn"),
       manualScorePills: document.getElementById("manualScorePills"),
-      showClassifierScoresToggle: document.getElementById("showClassifierScoresToggle")
+      chartLoadingOverlay: document.getElementById("chartLoadingOverlay")
     };
 
     function initControls() {
@@ -527,13 +558,6 @@
 
       els.startDate.addEventListener("change", () => { state.startDate = els.startDate.value; syncUrlState(true); render(); });
       els.endDate.addEventListener("change", () => { state.endDate = els.endDate.value; syncUrlState(true); render(); });
-
-      els.refreshBtn.addEventListener("click", () => {
-        state.startDate = els.startDate.value;
-        state.endDate = els.endDate.value;
-        syncUrlState(true);
-        render();
-      });
 
       els.clearDatesBtn.addEventListener("click", () => {
         state.startDate = "";
@@ -570,12 +594,6 @@
         syncUrlState(true);
         render();
       });
-      els.recomputeTargetsBtn.addEventListener("click", () => {
-        state.targetClassifierCount = Math.max(1, Number(els.targetClassifierCount.value || 4) || 4);
-        els.targetClassifierCount.value = state.targetClassifierCount;
-        syncUrlState(true);
-        render();
-      });
       els.targetClassifierCount.addEventListener("change", () => {
         state.targetClassifierCount = Math.max(1, Number(els.targetClassifierCount.value || 4) || 4);
         els.targetClassifierCount.value = state.targetClassifierCount;
@@ -591,6 +609,11 @@
           render();
         }
       });
+      if (els.manualClassifierCode) {
+        els.manualClassifierCode.addEventListener("input", () => {
+          els.manualClassifierCode.value = els.manualClassifierCode.value.replace(/[^0-9-]/g, "").slice(0, 5);
+        });
+      }
       if (els.addManualClassifierBtn) {
         els.addManualClassifierBtn.addEventListener("click", addManualClassifier);
       }
@@ -666,10 +689,12 @@
       els.statusText.className = ["status-text", kind].filter(Boolean).join(" ");
     }
 
-    function setLoading(isLoading, label) {
-      els.loadingState.textContent = label;
-      els.loadingState.style.background = isLoading ? "linear-gradient(180deg, #7c3aed, #5b21b6)" : "rgba(255,255,255,0.06)";
+    function setLoading(isLoading, label = "") {
+      if (els.chartLoadingOverlay) {
+        els.chartLoadingOverlay.style.display = isLoading ? "flex" : "none";
+      }
       els.addShooterBtn.disabled = isLoading;
+      if (els.addManualClassifierBtn) els.addManualClassifierBtn.disabled = isLoading;
     }
 
     function normalizeDivision(value) {
@@ -1611,6 +1636,9 @@
 
     function clearChart() {
       els.chartContainer.innerHTML = "";
+      if (els.chartLoadingOverlay) {
+        els.chartContainer.appendChild(els.chartLoadingOverlay);
+      }
       els.legend.innerHTML = "";
       els.chartContainer.style.height = `${state.chartHeight}px`;
       if (els.whatIfPanel) {
