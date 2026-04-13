@@ -1618,15 +1618,19 @@
       const focus = params.get("focus");
       const targetn = params.get("targetn");
       const manual = params.get("manual");
+
       if (tab === "elo" || tab === "classifiers") state.activeTab = tab;
       if (start) state.startDate = start;
       if (end) state.endDate = end;
-      state.showPeak = peak === "1";
-      state.showPrediction = predict === "1";
-      state.showClassifierScores = classifiers !== "0";
-      state.showWhatIf = params.has("whatif") ? whatif !== "0" : false;
+
+      if (params.has("peak")) state.showPeak = peak === "1";
+      if (params.has("predict")) state.showPrediction = predict === "1";
+      if (params.has("classifiers")) state.showClassifierScores = classifiers !== "0";
+      if (params.has("whatif")) state.showWhatIf = whatif !== "0";
+
       state.focusedSeries = focus ? decodeURIComponent(focus) : null;
-      state.targetClassifierCount = Math.max(1, Number(targetn || 4) || 4);
+      state.targetClassifierCount = Math.max(1, Number(targetn || state.targetClassifierCount || 4) || 4);
+
       els.startDate.value = state.startDate;
       els.endDate.value = state.endDate;
       els.showPeakToggle.checked = state.showPeak;
@@ -1635,6 +1639,7 @@
       els.showWhatIfToggle.checked = state.showWhatIf;
       if (els.targetClassifierCount) els.targetClassifierCount.value = state.targetClassifierCount;
       document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === state.activeTab));
+
       if (pairs) {
         state.selections = pairs.split("|").map(part => {
           const [name, division, id] = part.split("~").map(v => decodeURIComponent(v || ""));
@@ -2088,9 +2093,14 @@
         els.whatIfPanel.style.display = "none";
         els.whatIfPanel.innerHTML = "";
       }
-      if (!state.selections.length) return showEmpty("Add at least one shooter/division pair to begin.");
+      if (!state.selections.length) {
+        showEmpty("Add at least one shooter/division pair to begin.");
+        setLoading(false, "Loaded");
+        return;
+      }
       if (state.activeTab === "elo") drawEloTab();
       if (state.activeTab === "classifiers") drawClassifierTab();
+      setLoading(false, "Loaded");
     }
 
     async function hydrateSharedSelections() {
