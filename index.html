@@ -1567,13 +1567,12 @@
       url.searchParams.set("tab", state.activeTab);
       if (state.startDate) url.searchParams.set("start", state.startDate); else url.searchParams.delete("start");
       if (state.endDate) url.searchParams.set("end", state.endDate); else url.searchParams.delete("end");
-      if (state.showPeak) url.searchParams.set("peak", "1"); else url.searchParams.delete("peak");
-      if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
-      if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
-      if (state.showWhatIf) url.searchParams.set("whatif", "1"); else url.searchParams.set("whatif", "0");
+      url.searchParams.set("peak", state.showPeak ? "1" : "0");
+      url.searchParams.set("predict", state.showPrediction ? "1" : "0");
+      url.searchParams.set("classifiers", state.showClassifierScores ? "1" : "0");
+      url.searchParams.set("whatif", state.showWhatIf ? "1" : "0");
       if (state.focusedSeries) url.searchParams.set("focus", encodeURIComponent(state.focusedSeries)); else url.searchParams.delete("focus");
       if (state.targetClassifierCount !== 4) url.searchParams.set("targetn", String(state.targetClassifierCount)); else url.searchParams.delete("targetn");
-      if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
       if (state.selections.length) {
         const value = state.selections.map(sel => [
           encodeURIComponent(sel.name),
