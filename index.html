@@ -871,7 +871,7 @@
       const points = [];
       for (const row of sorted) {
         latestByCode.set(row.code, row);
-        const valid = [...latestByCode.values()].sort((a, b) => compareClassifierChronology(b, a));
+        const valid = [...latestByCode.values()].sort((a, b) => b.date - a.date || b.idx - a.idx);
         const lastEight = valid.slice(0, 8);
         const bestSix = [...lastEight].sort((a, b) => b.hhfPct - a.hhfPct).slice(0, 6);
         const average = bestSix.length >= 4 ? bestSix.reduce((sum, item) => sum + item.hhfPct, 0) / bestSix.length : null;
@@ -932,7 +932,7 @@
       const latestByCode = new Map();
       for (const row of sorted) latestByCode.set(row.code, row);
 
-      const valid = [...latestByCode.values()].sort((a, b) => compareClassifierChronology(b, a));
+      const valid = [...latestByCode.values()].sort((a, b) => b.date - a.date || b.idx - a.idx);
       const lastEight = valid.slice(0, 8);
       const bestSix = [...lastEight].sort((a, b) => b.hhfPct - a.hhfPct).slice(0, 6);
 
@@ -965,7 +965,7 @@
       const latestByCode = new Map();
       for (const row of sorted) latestByCode.set(row.code, row);
 
-      const valid = [...latestByCode.values()].sort((a, b) => compareClassifierChronology(b, a));
+      const valid = [...latestByCode.values()].sort((a, b) => b.date - a.date || b.idx - a.idx);
       const lastEightValid = valid.slice(0, 8);
       const lastEightCodes = new Set(lastEightValid.map(d => d.code));
       const earliestValidDate = lastEightValid.length
@@ -1936,8 +1936,8 @@
       const color = getColorScale();
       const series = state.selections.map(sel => {
         const fullRankings = sel.rankingHistory || [];
-        const visibleClassifiers = filterByDate(sel.classifiers || []).sort(compareClassifierChronology);
-        const visibleRankings = filterByDate(fullRankings).sort(compareClassifierChronology);
+        const visibleClassifiers = filterByDate(sel.classifiers || []);
+        const visibleRankings = filterByDate(fullRankings);
         const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullRankings, "ranking")) : [];
         const predictionValues = state.showPrediction ? polynomialPrediction(fullRankings, "ranking", 12, 5, 12) : [];
         return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
