@@ -322,7 +322,7 @@
           </div>
           <div>
             <label for="manualClassifierCode">Classifier code</label>
-            <input id="manualClassifierCode" type="text" placeholder="03-02" inputmode="numeric" pattern="[0-9-]*" maxlength="5" />
+            <input id="manualClassifierCode" type="text" placeholder="03-02" inputmode="tel" autocapitalize="off" autocomplete="off" spellcheck="false" pattern="[0-9-]*" maxlength="5" />
           </div>
           <div>
             <label for="manualHitfactor">Hit factor</label>
@@ -748,6 +748,17 @@
       return null;
     }
 
+    function compareClassifierChronology(a, b) {
+      const dateDiff = a.date - b.date;
+      if (dateDiff !== 0) return dateDiff;
+
+      const aHhf = Number.isFinite(Number(a?.hhfPct)) ? Number(a.hhfPct) : Number.NEGATIVE_INFINITY;
+      const bHhf = Number.isFinite(Number(b?.hhfPct)) ? Number(b.hhfPct) : Number.NEGATIVE_INFINITY;
+      if (aHhf !== bHhf) return aHhf - bHhf;
+
+      return (Number(a?.idx) || 0) - (Number(b?.idx) || 0);
+    }
+
     function pickNumber(row, candidates) {
       for (const key of candidates) {
         const n = Number(row?.[key]);
@@ -817,7 +828,7 @@
         matchName: row.match_name || "",
         idx
       })).filter(d => d.date && d.rating !== null && d.division === targetDivision)
-        .sort((a, b) => a.date - b.date || a.idx - b.idx);
+        .sort(compareClassifierChronology);
     }
 
     function parseClassifiers(payload, shooterMeta, division) {
@@ -845,7 +856,7 @@
           idx
         };
       }).filter(d => d.date && d.hhfPct !== null && d.division === targetDivision)
-        .sort((a, b) => a.date - b.date || a.idx - b.idx);
+        .sort(compareClassifierChronology);
     }
 
     function filterByDate(rows) {
@@ -855,7 +866,7 @@
     }
 
     function computeRollingRankings(classifiers) {
-      const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
+      const sorted = [...classifiers].sort(compareClassifierChronology);
       const latestByCode = new Map();
       const points = [];
       for (const row of sorted) {
@@ -917,7 +928,7 @@
     }
 
     function computeCurrentBestSixWindow(classifiers) {
-      const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
+      const sorted = [...classifiers].sort(compareClassifierChronology);
       const latestByCode = new Map();
       for (const row of sorted) latestByCode.set(row.code, row);
 
@@ -933,7 +944,7 @@
     }
 
     function getSupersededClassifierPoints(classifiers) {
-      const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
+      const sorted = [...classifiers].sort(compareClassifierChronology);
       const latestIndexByCode = new Map();
       sorted.forEach((row, i) => latestIndexByCode.set(row.code, i));
       return sorted.filter((row, i) => latestIndexByCode.get(row.code) !== i);
@@ -949,7 +960,7 @@
     }
 
     function computeClassifierCalcState(classifiers) {
-      const sorted = [...classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx);
+      const sorted = [...classifiers].sort(compareClassifierChronology);
 
       const latestByCode = new Map();
       for (const row of sorted) latestByCode.set(row.code, row);
@@ -1421,7 +1432,7 @@
         };
 
         selection.classifiers = [...(selection.classifiers || []), manualRow]
-          .sort((a, b) => a.date - b.date || a.idx - b.idx);
+          .sort(compareClassifierChronology);
         selection.rankingHistory = computeRollingRankings(selection.classifiers || []);
         state.cache.set(`${selection.id}:${selection.division}`, selection);
       });
@@ -1543,7 +1554,7 @@
         };
 
         selection.classifiers = [...(selection.classifiers || []), manualRow]
-          .sort((a, b) => a.date - b.date || a.idx - b.idx);
+          .sort(compareClassifierChronology);
         selection.rankingHistory = computeRollingRankings(selection.classifiers);
 
         const cacheKey = `${selection.id}:${selection.division}`;
@@ -1567,13 +1578,12 @@
       url.searchParams.set("tab", state.activeTab);
       if (state.startDate) url.searchParams.set("start", state.startDate); else url.searchParams.delete("start");
       if (state.endDate) url.searchParams.set("end", state.endDate); else url.searchParams.delete("end");
-      if (state.showPeak) url.searchParams.set("peak", "1"); else url.searchParams.delete("peak");
-      if (state.showPrediction) url.searchParams.set("predict", "1"); else url.searchParams.delete("predict");
-      if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
-      if (state.showWhatIf) url.searchParams.set("whatif", "1"); else url.searchParams.set("whatif", "0");
+      url.searchParams.set("peak", state.showPeak ? "1" : "0");
+      url.searchParams.set("predict", state.showPrediction ? "1" : "0");
+      url.searchParams.set("classifiers", state.showClassifierScores ? "1" : "0");
+      url.searchParams.set("whatif", state.showWhatIf ? "1" : "0");
       if (state.focusedSeries) url.searchParams.set("focus", encodeURIComponent(state.focusedSeries)); else url.searchParams.delete("focus");
       if (state.targetClassifierCount !== 4) url.searchParams.set("targetn", String(state.targetClassifierCount)); else url.searchParams.delete("targetn");
-      if (!state.showClassifierScores) url.searchParams.set("classifiers", "0"); else url.searchParams.delete("classifiers");
       if (state.selections.length) {
         const value = state.selections.map(sel => [
           encodeURIComponent(sel.name),
@@ -2040,7 +2050,7 @@
 
           if (isSeriesFocused(serie.key)) {
             const placed = [];
-            const labelData = [...serie.classifiers].sort((a, b) => a.date - b.date || a.idx - b.idx).map(d => {
+            const labelData = [...serie.classifiers].sort(compareClassifierChronology).map(d => {
               const lx = x(d.date);
               const ly = y(d.hhfPct);
               const label = String(d.code || d.classifierName || "");
