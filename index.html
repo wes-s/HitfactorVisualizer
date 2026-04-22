@@ -455,8 +455,7 @@
     }
 
     function getSeriesOpacity(key) {
-      if (!hasFocusedSeries()) return 1;
-      return isSeriesFocused(key) ? 1 : 1;
+      return 1;
     }
 
     function getSeriesStrokeWidth(key, base = 2.5) {
@@ -511,6 +510,18 @@
         .join(" ");
     }
 
+    function classifierKey(d) {
+      return `${String(d?.code || "")}|${Number(d?.idx) || 0}|${d?.date instanceof Date ? d.date.getTime() : new Date(d?.date).getTime()}`;
+    }
+
+    function isExcludedClassifier(d) {
+      return state.excludedKeys.has(classifierKey(d));
+    }
+
+    function getActiveClassifiers(classifiers) {
+      return (classifiers || []).filter(d => !isExcludedClassifier(d));
+    }
+
     const divisions = [
       "carry_optics","limited","limited_10","limited_optics","open","pcc","production","revolver","single_stack"
     ].sort((a, b) => formatDivisionLabel(a).localeCompare(formatDivisionLabel(b)));
@@ -531,7 +542,8 @@
       targetClassifierCount: 4,
       mobileChartHeight: null,
       mobileOrientation: null,
-      pendingManualScores: []
+      pendingManualScores: [],
+      excludedKeys: new Set()
     };
 
     const els = {
@@ -866,7 +878,7 @@
     }
 
     function computeRollingRankings(classifiers) {
-      const sorted = [...classifiers].sort(compareClassifierChronology);
+      const sorted = [...getActiveClassifiers(classifiers)].sort(compareClassifierChronology);
       const latestByCode = new Map();
       const points = [];
       for (const row of sorted) {
@@ -928,7 +940,7 @@
     }
 
     function computeCurrentBestSixWindow(classifiers) {
-      const sorted = [...classifiers].sort(compareClassifierChronology);
+      const sorted = [...getActiveClassifiers(classifiers)].sort(compareClassifierChronology);
       const latestByCode = new Map();
       for (const row of sorted) latestByCode.set(row.code, row);
 
@@ -968,7 +980,7 @@
     }
 
     function computeClassifierCalcState(classifiers) {
-      const sorted = [...classifiers].sort(compareClassifierChronology);
+      const sorted = [...getActiveClassifiers(classifiers)].sort(compareClassifierChronology);
 
       const latestByCode = new Map();
       for (const row of sorted) latestByCode.set(row.code, row);
@@ -1010,8 +1022,8 @@
     }
 
     function requiredAverageForNextClass(sel, nToAdd = 4) {
-      const classifiers = sel.classifiers || [];
-      const rankingHistory = sel.rankingHistory || [];
+      const classifiers = getActiveClassifiers(sel.classifiers || []);
+      const rankingHistory = computeRollingRankings(classifiers);
       const currentState = computeCurrentBestSixWindow(classifiers);
       const current = currentState.currentRanking;
       const peakRanking = (rankingHistory && rankingHistory.length) ? d3.max(rankingHistory, d => d.ranking) : current;
@@ -1019,10 +1031,7 @@
       const currentPctClass = getCurrentClassification(current);
       const officialCurrentClass = sel.currentClassification || null;
 
-      const effectiveCurrentClass = getMoreAdvancedClass(
-        officialCurrentClass || "U",
-        currentPctClass || "U"
-      );
+      const effectiveCurrentClass = officialCurrentClass || peakClass || currentPctClass || "U";
       const next = getNextClassificationThresholdFromClass(effectiveCurrentClass);
 
       if (!next) {
@@ -1038,8 +1047,38 @@
         };
       }
 
-      const baseScores = currentState.bestSix.map(d => Math.max(0, d.hhfPct)).sort((a, b) => b - a);
+      const calcState = computeClassifierCalcState(classifiers);
+      const baseValidEight = [...(calcState.lastEightValid || [])]
+        .sort((a, b) => compareClassifierChronology(b, a));
       const n = Math.max(1, Number(nToAdd) || 1);
+
+      function projectedAverageForCandidate(candidatePct) {
+        const simulated = [...baseValidEight];
+        const newestDate = simulated.length
+          ? new Date(Math.max(...simulated.map(d => d.date.getTime())))
+          : new Date();
+
+        for (let i = 0; i < n; i++) {
+          const nextDate = new Date(newestDate);
+          nextDate.setDate(nextDate.getDate() + i + 1);
+          simulated.unshift({
+            code: `__future_${i}__`,
+            idx: 10000000 + i,
+            date: nextDate,
+            hhfPct: Math.max(0, candidatePct)
+          });
+        }
+
+        const futureLastEight = simulated
+          .sort((a, b) => compareClassifierChronology(b, a))
+          .slice(0, 8);
+
+        const futureBestSix = [...futureLastEight]
+          .sort((a, b) => b.hhfPct - a.hhfPct)
+          .slice(0, 6);
+
+        return futureBestSix.length >= 4 ? d3.mean(futureBestSix, d => d.hhfPct) : null;
+      }
 
       let lo = 0;
       let hi = 130;
@@ -1047,9 +1086,8 @@
 
       for (let i = 0; i < 40; i++) {
         const mid = (lo + hi) / 2;
-        const combined = baseScores.concat(Array(n).fill(Math.max(0, mid))).sort((a, b) => b - a).slice(0, 6);
-        const avg = d3.mean(combined);
-        if (avg >= next.threshold) {
+        const avg = projectedAverageForCandidate(mid);
+        if (avg !== null && avg >= next.threshold) {
           feasible = true;
           hi = mid;
         } else {
@@ -1606,6 +1644,8 @@
       const manual = serializeManualScores();
       if (manual) url.searchParams.set("manual", manual); else url.searchParams.delete("manual");
 
+      if (state.excludedKeys.size) url.searchParams.set("excluded", [...state.excludedKeys].join("|")); else url.searchParams.delete("excluded");
+
       return url.toString();
     }
 
@@ -1645,6 +1685,7 @@
       const focus = params.get("focus");
       const targetn = params.get("targetn");
       const manual = params.get("manual");
+      const excluded = params.get("excluded");
 
       if (tab === "elo" || tab === "classifiers") state.activeTab = tab;
       if (start) state.startDate = start;
@@ -1673,6 +1714,8 @@
           return { name, division: normalizeDivision(division), id: id ? Number(id) || id : null };
         }).filter(sel => sel.name && sel.division);
       }
+
+      state.excludedKeys = excluded ? new Set(excluded.split("|").filter(Boolean)) : new Set();
 
       state.pendingManualScores = manual
         ? manual.split("|").map(part => {
@@ -1943,12 +1986,13 @@
     function drawClassifierTab() {
       const color = getColorScale();
       const series = state.selections.map(sel => {
-        const fullRankings = sel.rankingHistory || [];
+        const activeClassifiers = getActiveClassifiers(sel.classifiers || []);
+        const fullRankings = computeRollingRankings(activeClassifiers);
         const visibleClassifiers = filterByDate(sel.classifiers || []).sort(compareClassifierChronology);
         const visibleRankings = filterByDate(fullRankings).sort(compareClassifierChronology);
         const peakValues = state.showPeak ? filterByDate(buildFlatPeakLine(fullRankings, "ranking")) : [];
         const predictionValues = state.showPrediction ? polynomialPrediction(fullRankings, "ranking", 12, 5, 12) : [];
-        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, classifiers: visibleClassifiers, rankings: visibleRankings, peakValues, predictionValues };
+        return { key: `${normalizeDisplayName(sel.name)} · ${sel.division}`, classifiers: visibleClassifiers, activeClassifiers, rankings: visibleRankings, peakValues, predictionValues };
       }).filter(d => d.classifiers.length || d.rankings.length);
 
       if (!series.length) return showEmpty("No classifier data available for the selected shooter/division/date combinations.");
@@ -2012,7 +2056,7 @@
             .attr("y1", d => y(d.hhfPct) - 6)
             .attr("x2", d => x(d.date) + 6)
             .attr("y2", d => y(d.hhfPct) + 6)
-            .attr("stroke", "rgba(255,255,255,0.95)")
+            .attr("stroke", "#ffffff")
             .attr("stroke-width", 2)
             .style("pointer-events", "none");
 
@@ -2023,34 +2067,31 @@
             .attr("y1", d => y(d.hhfPct) + 6)
             .attr("x2", d => x(d.date) + 6)
             .attr("y2", d => y(d.hhfPct) - 6)
-            .attr("stroke", "rgba(255,255,255,0.95)")
+            .attr("stroke", "#ffffff")
             .attr("stroke-width", 2)
             .style("pointer-events", "none");
 
           const calcWindow = computeCurrentBestSixWindow(serie.classifiers);
           const currentCalcRows = calcWindow.bestSix || [];
-          const currentCalcKeys = new Set(currentCalcRows.map(d => `${d.code}|${d.idx}|${d.date.getTime()}`));
-          const thrownOutLowestRows = (calcState.lastEightValid || [])
-            .filter(d => !currentCalcKeys.has(`${d.code}|${d.idx}|${d.date.getTime()}`))
-            .sort((a, b) => a.hhfPct - b.hhfPct)
-            .slice(0, 2);
+          const thrownOutLowestRows = calcWindow.thrownOutLowest || [];
+          const excludedRows = serie.classifiers.filter(d => isExcludedClassifier(d));
 
-          svg.append("g").selectAll("circle.thrown-out-lowest-bg").data(thrownOutLowestRows).join("circle")
-            .attr("class", "thrown-out-lowest-bg")
+          svg.append("g").selectAll("circle.thrown-out-lowest-halo").data(thrownOutLowestRows).join("circle")
+            .attr("class", "thrown-out-lowest-halo")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
-            .attr("r", 7)
-            .attr("fill", "#020617")
+            .attr("r", d => d.isManual ? 6.5 : 5.5)
+            .attr("fill", "none")
             .attr("stroke", "#ffffff")
             .attr("stroke-width", 1)
             .style("pointer-events", "none");
 
-          svg.append("g").selectAll("circle.current-calc-bg").data(currentCalcRows).join("circle")
-            .attr("class", "current-calc-bg")
+          svg.append("g").selectAll("circle.current-calc-halo").data(currentCalcRows).join("circle")
+            .attr("class", "current-calc-halo")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
-            .attr("r", 7)
-            .attr("fill", "#020617")
+            .attr("r", d => d.isManual ? 6.5 : 5.5)
+            .attr("fill", "none")
             .attr("stroke", color(serie.key))
             .attr("stroke-width", 1)
             .style("pointer-events", "none");
@@ -2062,18 +2103,40 @@
             .attr("fill", d => d.isManual ? "#020617" : color(serie.key))
             .attr("stroke", d => d.isManual ? color(serie.key) : "none")
             .attr("stroke-width", d => d.isManual ? 2 : 0)
+            .style("cursor", "pointer")
+            .on("click", (event, d) => {
+              const key = classifierKey(d);
+              if (state.excludedKeys.has(key)) state.excludedKeys.delete(key);
+              else state.excludedKeys.add(key);
+              syncUrlState(true);
+              render();
+            })
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
               const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
-              const isThrownOutLowest = thrownOutLowestRows.some(item =>
-                item.code === d.code &&
-                item.idx === d.idx &&
-                item.date.getTime() === d.date.getTime()
-              );
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${isThrownOutLowest ? `<br>In most recent valid 8 · thrown out as one of the 2 lowest` : ""}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              const isThrownOutLowest = thrownOutLowestRows.some(item => classifierKey(item) === classifierKey(d));
+              const isExcluded = isExcludedClassifier(d);
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${isThrownOutLowest ? `<br>In most recent valid 8 · thrown out as one of the 2 lowest` : ""}${isExcluded ? `<br>Excluded from all calculations` : `<br>Click to exclude/include`}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
+
+          const excludedX = svg.append("g");
+          excludedX.selectAll("line.excluded-a").data(excludedRows).join("line")
+            .attr("x1", d => x(d.date) - 6)
+            .attr("y1", d => y(d.hhfPct) - 6)
+            .attr("x2", d => x(d.date) + 6)
+            .attr("y2", d => y(d.hhfPct) + 6)
+            .attr("stroke", "#ef4444")
+            .attr("stroke-width", 2);
+
+          excludedX.selectAll("line.excluded-b").data(excludedRows).join("line")
+            .attr("x1", d => x(d.date) - 6)
+            .attr("y1", d => y(d.hhfPct) + 6)
+            .attr("x2", d => x(d.date) + 6)
+            .attr("y2", d => y(d.hhfPct) - 6)
+            .attr("stroke", "#ef4444")
+            .attr("stroke-width", 2);
 
           if (isSeriesFocused(serie.key)) {
             const placed = [];
@@ -2112,7 +2175,7 @@
               .attr("text-anchor", d => d.labelAnchor)
               .attr("dominant-baseline", "middle")
               .attr("font-size", "9px")
-              .attr("fill", "rgba(255,255,255,0.9)")
+              .attr("fill", "#ffffff")
               .attr("transform", d => `rotate(-90, ${d.labelX}, ${d.labelY})`)
               .style("pointer-events", "none")
               .text(d => d.code || d.classifierName || "");
