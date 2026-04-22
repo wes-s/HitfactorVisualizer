@@ -456,7 +456,7 @@
 
     function getSeriesOpacity(key) {
       if (!hasFocusedSeries()) return 1;
-      return isSeriesFocused(key) ? 1 : 0.18;
+      return isSeriesFocused(key) ? 1 : 1;
     }
 
     function getSeriesStrokeWidth(key, base = 2.5) {
@@ -934,11 +934,19 @@
 
       const valid = [...latestByCode.values()].sort((a, b) => compareClassifierChronology(b, a));
       const lastEight = valid.slice(0, 8);
-      const bestSix = [...lastEight].sort((a, b) => b.hhfPct - a.hhfPct).slice(0, 6);
+      const rankedLastEight = [...lastEight].sort((a, b) => {
+        const pctDiff = b.hhfPct - a.hhfPct;
+        if (pctDiff !== 0) return pctDiff;
+        return compareClassifierChronology(b, a);
+      });
+      const bestSix = rankedLastEight.slice(0, 6);
+      const thrownOutLowest = rankedLastEight.slice(6).sort((a, b) => compareClassifierChronology(a, b));
 
       return {
         currentRanking: bestSix.length >= 4 ? d3.mean(bestSix, d => d.hhfPct) : null,
         bestSix,
+        thrownOutLowest,
+        lastEight,
         latestByCode
       };
     }
@@ -1823,7 +1831,7 @@
         .attr("fill", "none")
         .attr("stroke", color)
         .attr("stroke-width", 1)
-        .attr("opacity", 0.9)
+        .attr("opacity", 1)
         .attr("d", line);
     }
 
@@ -1850,7 +1858,7 @@
           .attr("fill", "none")
           .attr("stroke", color)
           .attr("stroke-width", 1.2)
-          .attr("opacity", 0.28)
+          .attr("opacity", 1)
           .attr("d", line);
       }
 
@@ -1865,7 +1873,7 @@
           .attr("stroke", color)
           .attr("stroke-width", 1.75)
           .attr("stroke-dasharray", "3 5")
-          .attr("opacity", 0.9)
+          .attr("opacity", 1)
           .attr("d", line);
       }
     }
@@ -1909,15 +1917,15 @@
       const valueLine = d3.line().defined(d => d.rating !== null).x(d => x(d.date)).y(d => y(d.rating));
 
       series.forEach(serie => {
-        svg.append("path").datum(serie.values).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", getSeriesOpacity(serie.key)).attr("d", valueLine);
+        svg.append("path").datum(serie.values).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", 1).attr("d", valueLine);
         if (state.showPeak) {
           svg.append("g")
-            .attr("opacity", getSeriesOpacity(serie.key))
+            .attr("opacity", 1)
             .call(g => drawPeakLine(g, serie.peakValues, x, y, color(serie.key)));
         }
         if (state.showPrediction) {
           svg.append("g")
-            .attr("opacity", getSeriesOpacity(serie.key))
+            .attr("opacity", 1)
             .call(g => drawPredictionLine(g, serie.predictionValues, x, y, color(serie.key), (serie.values.length ? serie.values[serie.values.length - 1] : null), "rating"));
         }
         svg.append("g").selectAll("circle").data(serie.values).join("circle")
@@ -1978,15 +1986,15 @@
       }));
 
       series.forEach(serie => {
-        svg.append("path").datum(serie.rankings).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", getSeriesOpacity(serie.key)).attr("d", rankLine);
+        svg.append("path").datum(serie.rankings).attr("fill", "none").attr("stroke", color(serie.key)).attr("stroke-width", getSeriesStrokeWidth(serie.key, 2.5)).attr("opacity", 1).attr("d", rankLine);
         if (state.showPeak) {
           svg.append("g")
-            .attr("opacity", getSeriesOpacity(serie.key))
+            .attr("opacity", 1)
             .call(g => drawPeakLine(g, serie.peakValues, x, y, color(serie.key)));
         }
         if (state.showPrediction) {
           svg.append("g")
-            .attr("opacity", getSeriesOpacity(serie.key))
+            .attr("opacity", 1)
             .call(g => drawPredictionLine(g, serie.predictionValues, x, y, color(serie.key), (serie.rankings.length ? serie.rankings[serie.rankings.length - 1] : null), "ranking"));
         }
 
@@ -1995,7 +2003,7 @@
           const removedFromCurrentCalc = calcState.removedFromCurrentCalc || [];
 
           const removedXGroup = svg.append("g")
-            .attr("opacity", getSeriesOpacity(serie.key));
+            .attr("opacity", 1);
 
           removedXGroup.selectAll("line.removed-a")
             .data(removedFromCurrentCalc)
@@ -2019,31 +2027,50 @@
             .attr("stroke-width", 2)
             .style("pointer-events", "none");
 
-          const currentCalcRows = (computeCurrentBestSixWindow(serie.classifiers).bestSix || []);
+          const calcWindow = computeCurrentBestSixWindow(serie.classifiers);
+          const currentCalcRows = calcWindow.bestSix || [];
+          const currentCalcKeys = new Set(currentCalcRows.map(d => `${d.code}|${d.idx}|${d.date.getTime()}`));
+          const thrownOutLowestRows = (calcState.lastEightValid || [])
+            .filter(d => !currentCalcKeys.has(`${d.code}|${d.idx}|${d.date.getTime()}`))
+            .sort((a, b) => a.hhfPct - b.hhfPct)
+            .slice(0, 2);
 
-          svg.append("g").selectAll("circle.current-calc").data(currentCalcRows).join("circle")
-            .attr("class", "current-calc")
+          svg.append("g").selectAll("circle.thrown-out-lowest-bg").data(thrownOutLowestRows).join("circle")
+            .attr("class", "thrown-out-lowest-bg")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
             .attr("r", 7)
-            .attr("fill", "rgba(255,255,255,0.18)")
+            .attr("fill", "#020617")
+            .attr("stroke", "#ffffff")
+            .attr("stroke-width", 1)
+            .style("pointer-events", "none");
+
+          svg.append("g").selectAll("circle.current-calc-bg").data(currentCalcRows).join("circle")
+            .attr("class", "current-calc-bg")
+            .attr("cx", d => x(d.date))
+            .attr("cy", d => y(d.hhfPct))
+            .attr("r", 7)
+            .attr("fill", "#020617")
             .attr("stroke", color(serie.key))
             .attr("stroke-width", 1)
-            .attr("opacity", 0.9)
             .style("pointer-events", "none");
 
           svg.append("g").selectAll("circle.classifier").data(serie.classifiers).join("circle")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
             .attr("r", d => d.isManual ? 5.5 : 4)
-            .attr("fill", d => d.isManual ? "none" : color(serie.key))
+            .attr("fill", d => d.isManual ? "#020617" : color(serie.key))
             .attr("stroke", d => d.isManual ? color(serie.key) : "none")
             .attr("stroke-width", d => d.isManual ? 2 : 0)
-            .attr("opacity", 0.72)
             .on("mousemove", (event, d) => {
               const removedState = findRemovedClassifierState(serie.classifiers, d);
               const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              const isThrownOutLowest = thrownOutLowestRows.some(item =>
+                item.code === d.code &&
+                item.idx === d.idx &&
+                item.date.getTime() === d.date.getTime()
+              );
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${isThrownOutLowest ? `<br>In most recent valid 8 · thrown out as one of the 2 lowest` : ""}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
