@@ -283,6 +283,18 @@
       </div>
 
             <div id="selectionPills" class="selection-pills"></div>
+
+      <div class="add-grid" style="grid-template-columns: minmax(0,1.15fr) auto;">
+        <div>
+          <label for="downloadShooterSelect">Download classifier history for</label>
+          <select id="downloadShooterSelect"></select>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="downloadHistoryBtn" class="primary">Download history</button>
+        </div>
+      </div>
+
       <div id="statusText" class="status-text" style="display:none;" aria-live="polite"></div>
 
       <div class="date-grid">
@@ -543,7 +555,8 @@
       mobileChartHeight: null,
       mobileOrientation: null,
       pendingManualScores: [],
-      excludedKeys: new Set()
+      excludedKeys: new Set(),
+      classifierInfoCache: new Map()
     };
 
     const els = {
@@ -571,7 +584,9 @@
       manualHitfactor: document.getElementById("manualHitfactor"),
       manualClassifierDate: document.getElementById("manualClassifierDate"),
       addManualClassifierBtn: document.getElementById("addManualClassifierBtn"),
-      manualScorePills: document.getElementById("manualScorePills")
+      manualScorePills: document.getElementById("manualScorePills"),
+      downloadShooterSelect: document.getElementById("downloadShooterSelect"),
+      downloadHistoryBtn: document.getElementById("downloadHistoryBtn")
     };
 
     function initControls() {
@@ -653,6 +668,9 @@
       }
       if (els.addManualClassifierBtn) {
         els.addManualClassifierBtn.addEventListener("click", addManualClassifier);
+      }
+      if (els.downloadHistoryBtn) {
+        els.downloadHistoryBtn.addEventListener("click", downloadSelectedShooterHistory);
       }
       if (els.manualHitfactor) {
         els.manualHitfactor.addEventListener("keydown", event => {
@@ -780,31 +798,121 @@
     }
 
     function pickNumberDeep(row, candidates) {
-      const direct = pickNumber(row, candidates);
-      if (direct !== null) return direct;
-      if (!row || typeof row !== "object") return null;
+      const seen = new Set();
 
-      for (const value of Object.values(row)) {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          const nested = pickNumber(value, candidates);
+      function walk(value) {
+        if (value == null) return null;
+        if (typeof value !== "object") return null;
+        if (seen.has(value)) return null;
+        seen.add(value);
+
+        const direct = pickNumber(value, candidates);
+        if (direct !== null) return direct;
+
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            const nested = walk(item);
+            if (nested !== null) return nested;
+          }
+          return null;
+        }
+
+        for (const nestedValue of Object.values(value)) {
+          const nested = walk(nestedValue);
           if (nested !== null) return nested;
         }
+        return null;
       }
-      return null;
+
+      return walk(row);
+    }
+
+    function collectNumericLeafValues(row) {
+      const seen = new Set();
+      const found = [];
+
+      function visit(value, path = []) {
+        if (value == null) return;
+        if (typeof value !== "object") return;
+        if (seen.has(value)) return;
+        seen.add(value);
+
+        if (Array.isArray(value)) {
+          value.forEach((item, index) => visit(item, [...path, String(index)]));
+          return;
+        }
+
+        Object.entries(value).forEach(([key, nestedValue]) => {
+          const nextPath = [...path, key];
+          const numericValue = Number(nestedValue);
+          if (!Number.isNaN(numericValue) && nestedValue !== "" && nestedValue != null) {
+            found.push({ key, path: nextPath, pathText: nextPath.join("."), value: numericValue });
+          }
+          if (nestedValue && typeof nestedValue === "object") visit(nestedValue, nextPath);
+        });
+      }
+
+      visit(row, []);
+      return found;
+    }
+
+    function pickNumericLeafByHeuristic(row, mode) {
+      const candidates = collectNumericLeafValues(row);
+      if (!candidates.length) return null;
+
+      const scored = candidates.map(candidate => {
+        const key = String(candidate.key || "").toLowerCase();
+        const pathText = String(candidate.pathText || "").toLowerCase();
+        let score = 0;
+
+        if (mode === "hitfactor") {
+          if (/(^|_|\.)(hitfactor|hit_factor|hitfactorvalue|hit_factor_value|hitfactorscore|hit_factor_score)(_|\.|$)/.test(pathText)) score += 120;
+          if (/(^|_|\.)(stagehf|stage_hf|scorehf|score_hf|scoredhf|scored_hf)(_|\.|$)/.test(pathText)) score += 110;
+          if (key === "hf") score += 90;
+          if (/(^|_|\.)(hf)(_|\.|$)/.test(pathText)) score += 55;
+          if (/hit/.test(pathText) && /factor/.test(pathText)) score += 60;
+          if (/score/.test(pathText) && /hit/.test(pathText)) score += 30;
+          if (/hhf|high_hit_factor|highhitfactor|max_hit_factor|maxhitfactor|percentage|percent|pct/.test(pathText)) score -= 160;
+        }
+
+        if (mode === "hhf") {
+          if (/(^|_|\.)(hhf|hhfvalue|hhf_value)(_|\.|$)/.test(pathText)) score += 120;
+          if (/high_hit_factor|highhitfactor|max_hit_factor|maxhitfactor|classifier_hhf|classifierhhf|division_hhf|divisionhhf|stage_hhf|stagehhf/.test(pathText)) score += 100;
+          if (/high/.test(pathText) && /factor/.test(pathText)) score += 45;
+          if (/hhf/.test(key)) score += 80;
+          if (/(^|_|\.)(hf)(_|\.|$)/.test(pathText) && !/hit/.test(pathText)) score += 25;
+          if (/hit_factor|hitfactor|score_hf|scorehf|scored_hit_factor|scoredhitfactor|final_hit_factor|finalhitfactor/.test(pathText)) score -= 180;
+          if (/percentage|percent|pct/.test(pathText)) score -= 140;
+        }
+
+        if (!Number.isFinite(candidate.value) || candidate.value <= 0) score -= 20;
+        return { ...candidate, score };
+      }).filter(candidate => candidate.score > 0)
+        .sort((a, b) => b.score - a.score || a.pathText.localeCompare(b.pathText));
+
+      return scored.length ? scored[0].value : null;
     }
 
     function extractClassifierHitFactor(row) {
-      return pickNumberDeep(row, [
-        "hit_factor","hitfactor","hf","hitFactor","score_hf","stage_hf",
-        "hit_factor_score","scored_hit_factor","hitFactorScore","factor",
-        "score","points_factor"
+      const direct = pickNumberDeep(row, [
+        "hit_factor","hitfactor","hitFactor","score_hf","stage_hf",
+        "hit_factor_score","scored_hit_factor","hitFactorScore",
+        "points_factor","hitfactor_value","hitFactorValue",
+        "stage_hit_factor","stageHitFactor","final_hit_factor","finalHitFactor",
+        "uspsa_hit_factor","uspsaHitFactor","scored_hf","scoredHF",
+        "hit_factor_scored","hitFactorScored"
       ]);
+      return direct !== null ? direct : pickNumericLeafByHeuristic(row, "hitfactor");
     }
 
     function extractClassifierHHFValue(row) {
-      return pickNumberDeep(row, [
-        "hhf","hhf_value","high_hit_factor","highHitFactor","hhfValue"
+      const direct = pickNumberDeep(row, [
+        "hhf","hhf_value","high_hit_factor","highHitFactor","hhfValue",
+        "stage_hhf","stageHHF","classifier_hhf","classifierHHF",
+        "max_hit_factor","maxHitFactor","high_factor","highFactor",
+        "division_hhf","divisionHHF","official_hhf","officialHHF"
       ]);
+      return direct !== null ? direct : pickNumericLeafByHeuristic(row, "hhf");
     }
 
     function fuzzyScore(query, candidate) {
@@ -847,19 +955,23 @@
       const rows = findArrayDeep(payload, ["classifiers","scores","history","items"]);
       const targetDivision = normalizeDivision(division);
       return rows.map((row, idx) => {
-        const hhfPct = pickNumber(row, ["hhf_pct","hhfPercent","percentage","pct"]);
+        const apiHhfPct = pickNumberDeep(row, ["hhf_pct","hhfPercent","percentage","pct"]);
         const hitfactor = extractClassifierHitFactor(row);
         const hhfValue = extractClassifierHHFValue(row);
+        const hasRawValues = Number.isFinite(hitfactor) && Number.isFinite(hhfValue) && hhfValue !== 0;
+        const preciseHhfPct = hasRawValues
+          ? ((hitfactor / hhfValue) * 100)
+          : apiHhfPct;
         const derivedHitfactor = Number.isFinite(hitfactor)
           ? hitfactor
-          : (Number.isFinite(hhfPct) && Number.isFinite(hhfValue) ? (hhfPct * hhfValue / 100) : null);
+          : (Number.isFinite(preciseHhfPct) && Number.isFinite(hhfValue) ? (preciseHhfPct * hhfValue / 100) : null);
 
         return {
           shooterId: shooterMeta.id,
           shooterName: shooterMeta.name,
           division: normalizeDivision(row.division || division),
           date: parseDateValue(row),
-          hhfPct,
+          hhfPct: Number.isFinite(preciseHhfPct) ? preciseHhfPct : null,
           hitfactor: derivedHitfactor,
           hhfValue,
           code: String(row.code || row.classifier_code || row.classifier || row.stage_code || row.name || `classifier_${idx}`),
@@ -1005,11 +1117,127 @@
           replacedBy: latestByCode.get(row.code)
         }));
 
+      const currentWindow = computeCurrentBestSixWindow(sorted);
+
       return {
         latestByCode,
         lastEightValid,
-        removedFromCurrentCalc
+        removedFromCurrentCalc,
+        currentWindow
       };
+    }
+
+    function buildClassifierTimeline(classifiers) {
+      const active = [...getActiveClassifiers(classifiers || [])].sort(compareClassifierChronology);
+      const timeline = [];
+
+      active.forEach((row, index) => {
+        const rowsThroughCurrent = active.slice(0, index + 1);
+        const rollingRanking = computeRollingRankings(rowsThroughCurrent);
+        const calcWindow = computeCurrentBestSixWindow(rowsThroughCurrent);
+        const latestByCode = new Map();
+        rowsThroughCurrent.forEach(item => latestByCode.set(item.code, item));
+
+        const isDuplicate = latestByCode.get(row.code) !== row;
+        const isThrownOut = !isDuplicate && (calcWindow.thrownOutLowest || []).some(item => classifierKey(item) === classifierKey(row));
+        const currentPct = rollingRanking.length ? rollingRanking[rollingRanking.length - 1].ranking : null;
+
+        timeline.push({
+          row,
+          inclusionCode: isDuplicate ? 'm' : (isThrownOut ? 'f' : 'v'),
+          calculatedPct: Number.isFinite(currentPct) ? currentPct : null
+        });
+      });
+
+      return timeline;
+    }
+
+    function getCurrentInclusionCode(classifiers, row) {
+      if (isExcludedClassifier(row)) return 'mi';
+
+      const calcState = computeClassifierCalcState(classifiers || []);
+      const rowKey = classifierKey(row);
+      if ((calcState.removedFromCurrentCalc || []).some(item => classifierKey(item) === rowKey)) return 'm';
+      const currentWindow = computeCurrentBestSixWindow(classifiers || []);
+      if ((currentWindow.thrownOutLowest || []).some(item => classifierKey(item) === rowKey)) return 'f';
+      return 'v';
+    }
+
+    function buildShooterHistoryDownloadRows(selection) {
+      const classifiers = filterByDate(selection?.classifiers || []).sort(compareClassifierChronology);
+      const timeline = buildClassifierTimeline(classifiers);
+      return timeline.map(entry => ({
+        classifierDate: entry.row.date instanceof Date ? entry.row.date.toISOString().slice(0, 10) : '',
+        inclusionCode: isExcludedClassifier(entry.row) ? 'mi' : getCurrentInclusionCode(classifiers, entry.row),
+        classifierPctOfHHF: Number.isFinite(Number(entry.row.hhfPct)) ? Number(entry.row.hhfPct) : null,
+        currentCalculatedClassificationPct: Number.isFinite(entry.calculatedPct) ? entry.calculatedPct : null,
+        classifierCode: entry.row.code || ''
+      }));
+    }
+
+    function csvEscape(value) {
+      const stringValue = value == null ? '' : String(value);
+      if (/[,"\n]/.test(stringValue)) return '"' + stringValue.replace(/"/g, '""') + '"';
+      return stringValue;
+    }
+
+    function formatCsvNumber(value) {
+      return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : '';
+    }
+
+    function formatDisplayNumber(value, digits = 4) {
+      return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '';
+    }
+
+    function downloadSelectedShooterHistory() {
+      if (!els.downloadShooterSelect) return;
+      const bundleKey = els.downloadShooterSelect.value || '';
+      const selection = findSelectionByBundleKey(bundleKey);
+      if (!selection) {
+        flashStatus('Choose a shooter/division to download.', 'error');
+        return;
+      }
+
+      const rows = buildShooterHistoryDownloadRows(selection);
+      if (!rows.length) {
+        flashStatus('No classifier history is available for the selected shooter in the current date range.', 'error');
+        return;
+      }
+
+      const headers = [
+        'classifier_date',
+        'classifier_inclusion_code',
+        'classifier_pct_of_hhf',
+        'current_calculated_classification_pct',
+        'classifier_code'
+      ];
+
+      const sortedRows = [...rows].sort((a, b) => {
+        const aTime = a.classifierDate ? new Date(`${a.classifierDate}T00:00:00`).getTime() : 0;
+        const bTime = b.classifierDate ? new Date(`${b.classifierDate}T00:00:00`).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      const csvLines = [headers.join(',')].concat(sortedRows.map(row => [
+        csvEscape(row.classifierDate),
+        csvEscape(row.inclusionCode),
+        csvEscape(formatCsvNumber(row.classifierPctOfHHF)),
+        csvEscape(formatCsvNumber(row.currentCalculatedClassificationPct)),
+        csvEscape(`'${row.classifierCode}'`)
+      ].join(',')));
+
+      const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeName = normalizeDisplayName(selection.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const safeDivision = normalizeDivision(selection.division).replace(/[^a-z0-9]+/g, '-');
+      link.href = url;
+      link.download = `${safeName || 'shooter'}-${safeDivision || 'division'}-classifier-history.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      flashStatus(`Downloaded classifier history for ${normalizeDisplayName(selection.name)} · ${formatDivisionLabel(selection.division)}.`, 'ok');
     }
 
     function findRemovedClassifierState(classifiers, row) {
@@ -1294,7 +1522,8 @@
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/classifiers`),
         fetchJson(`${API_BASE}/v1/shooters/${selection.id}/matches`)
       ]);
-      const fullClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
+      const parsedClassifierHistory = parseClassifiers(classifierPayload, selection, selection.division);
+      const fullClassifierHistory = await enrichClassifierHistoryPrecision(parsedClassifierHistory, selection.division);
       const targetDivision = normalizeDivision(selection.division);
 
       const latestDivisionMatch = findArrayDeep(matchPayload, ["data"])
@@ -1383,7 +1612,38 @@
         els.selectionPills.appendChild(pill);
       });
       renderManualSelectionOptions();
+      renderDownloadSelectionOptions();
       renderManualScorePills();
+    }
+
+    function renderDownloadSelectionOptions() {
+      if (!els.downloadShooterSelect) return;
+      const currentValue = els.downloadShooterSelect.value;
+      els.downloadShooterSelect.innerHTML = '';
+
+      if (!state.selections.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Add a shooter/division first';
+        els.downloadShooterSelect.appendChild(option);
+        els.downloadShooterSelect.disabled = true;
+        if (els.downloadHistoryBtn) els.downloadHistoryBtn.disabled = true;
+        return;
+      }
+
+      state.selections.forEach(sel => {
+        const option = document.createElement('option');
+        option.value = `${sel.id}:${sel.division}`;
+        option.textContent = `${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)}`;
+        els.downloadShooterSelect.appendChild(option);
+      });
+
+      if (currentValue && [...els.downloadShooterSelect.options].some(opt => opt.value === currentValue)) {
+        els.downloadShooterSelect.value = currentValue;
+      }
+
+      els.downloadShooterSelect.disabled = false;
+      if (els.downloadHistoryBtn) els.downloadHistoryBtn.disabled = false;
     }
 
     function renderManualSelectionOptions() {
@@ -1470,7 +1730,7 @@
           hhfPct: Math.max(0, Number(item.hhfPct) || 0),
           code: item.code,
           classifierName: item.classifierName || item.code,
-          matchName: `Provisional manual score · HF ${Number(item.hitfactor).toFixed(2)}`,
+          matchName: `Provisional manual score · HF ${formatDisplayNumber(Number(item.hitfactor))}`,
           idx: nextIdx + 1000000,
           isManual: true,
           manualHitfactor: Number(item.hitfactor),
@@ -1510,7 +1770,7 @@
           const pill = document.createElement("div");
           pill.className = "selection-pill";
           const dateText = row.date instanceof Date ? row.date.toISOString().slice(0, 10) : "";
-          pill.innerHTML = `<span>${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)} · ${row.code} · ${row.hhfPct.toFixed(2)}%${row.manualHitfactor != null ? ` · HF ${row.manualHitfactor.toFixed(2)}` : ""}${dateText ? ` · ${dateText}` : ""}</span>`;
+          pill.innerHTML = `<span>${normalizeDisplayName(sel.name)} · ${formatDivisionLabel(sel.division)} · ${row.code} · ${formatDisplayNumber(row.hhfPct)}%${row.manualHitfactor != null ? ` · HF ${formatDisplayNumber(row.manualHitfactor)}` : ""}${dateText ? ` · ${dateText}` : ""}</span>`;
           const btn = document.createElement("button");
           btn.textContent = "Remove";
           btn.addEventListener("click", () => removeManualClassifier(sel, row));
@@ -1539,20 +1799,62 @@
       return [];
     }
 
+
+    async function enrichClassifierHistoryPrecision(classifiers, division) {
+      const normalizedDivision = normalizeDivision(division);
+      const result = [...(classifiers || [])];
+      const codesToFetch = [...new Set(result
+        .filter(row => !row.isManual && Number.isFinite(Number(row.hitfactor)) && String(row.code || '').trim())
+        .map(row => String(row.code).trim().toUpperCase()))];
+
+      if (!codesToFetch.length) return result;
+
+      const infoByCode = new Map();
+      await Promise.all(codesToFetch.map(async code => {
+        try {
+          const info = await resolveClassifierDivisionInfo(code, normalizedDivision);
+          infoByCode.set(code, info);
+        } catch (error) {
+          console.warn(`Unable to resolve classifier HHF for ${code} in ${normalizedDivision}.`, error);
+        }
+      }));
+
+      return result.map(row => {
+        if (row.isManual || !Number.isFinite(Number(row.hitfactor))) return row;
+        const code = String(row.code || '').trim().toUpperCase();
+        const info = infoByCode.get(code);
+        const preciseHHF = Number(info?.hhfValue);
+        if (!Number.isFinite(preciseHHF) || preciseHHF === 0) return row;
+        return {
+          ...row,
+          hhfValue: preciseHHF,
+          hhfPct: (Number(row.hitfactor) / preciseHHF) * 100
+        };
+      }).sort(compareClassifierChronology);
+    }
+
     async function resolveClassifierDivisionInfo(classifierCode, division) {
-      const payload = await fetchJson(`${API_BASE}/v1/classifiers/${encodeURIComponent(classifierCode)}`);
+      const normalizedDivision = normalizeDivision(division);
+      const normalizedCode = String(classifierCode || '').trim().toUpperCase();
+      const cacheKey = `${normalizedDivision}:${normalizedCode}`;
+      if (state.classifierInfoCache.has(cacheKey)) {
+        return state.classifierInfoCache.get(cacheKey);
+      }
+
+      const payload = await fetchJson(`${API_BASE}/v1/classifiers/${encodeURIComponent(normalizedCode)}`);
       const entries = extractClassifierEntries(payload)
         .map(row => ({
           ...row,
           division: normalizeDivision(row.division),
           hhfValue: Number(row.hhf_value)
         }))
-        .filter(row => row.division === normalizeDivision(division) && Number.isFinite(row.hhfValue));
+        .filter(row => row.division === normalizedDivision && Number.isFinite(row.hhfValue));
 
       const match = entries[0] || null;
       if (!match) {
-        throw new Error(`No classifier HHF found for ${classifierCode} in ${formatDivisionLabel(division)}.`);
+        throw new Error(`No classifier HHF found for ${normalizedCode} in ${formatDivisionLabel(division)}.`);
       }
+      state.classifierInfoCache.set(cacheKey, match);
       return match;
     }
 
@@ -1592,7 +1894,7 @@
           hhfPct: Math.max(0, hhfPct),
           code: classifierCode,
           classifierName: classifierInfo.name || classifierInfo.title || classifierCode,
-          matchName: `Provisional manual score · HF ${hitfactor.toFixed(2)}`,
+          matchName: `Provisional manual score · HF ${formatDisplayNumber(hitfactor)}`,
           idx: nextIdx + 1000000,
           isManual: true,
           manualHitfactor: hitfactor,
@@ -1609,7 +1911,7 @@
         els.manualClassifierCode.value = "";
         els.manualHitfactor.value = "";
         renderManualScorePills();
-        flashStatus(`Added provisional ${classifierCode} at ${hhfPct.toFixed(2)}% to ${normalizeDisplayName(selection.name)} · ${formatDivisionLabel(selection.division)}.`, "ok");
+        flashStatus(`Added provisional ${classifierCode} at ${formatDisplayNumber(hhfPct)}% to ${normalizeDisplayName(selection.name)} · ${formatDivisionLabel(selection.division)}.`, "ok");
         render();
       } catch (error) {
         console.error(error);
@@ -1644,7 +1946,12 @@
       const manual = serializeManualScores();
       if (manual) url.searchParams.set("manual", manual); else url.searchParams.delete("manual");
 
-      if (state.excludedKeys.size) url.searchParams.set("excluded", [...state.excludedKeys].join("|")); else url.searchParams.delete("excluded");
+      if (state.excludedKeys.size) {
+        const excludedValue = [...state.excludedKeys].map(key => encodeURIComponent(key)).join("|");
+        url.searchParams.set("excluded", excludedValue);
+      } else {
+        url.searchParams.delete("excluded");
+      }
 
       return url.toString();
     }
@@ -1715,7 +2022,9 @@
         }).filter(sel => sel.name && sel.division);
       }
 
-      state.excludedKeys = excluded ? new Set(excluded.split("|").filter(Boolean)) : new Set();
+      state.excludedKeys = excluded
+        ? new Set(excluded.split("|").filter(Boolean).map(value => decodeURIComponent(value)))
+        : new Set();
 
       state.pendingManualScores = manual
         ? manual.split("|").map(part => {
@@ -1828,14 +2137,14 @@
 
         const officialClass = entry.note.currentOfficialClass || "Unknown";
         const calcClass = entry.note.currentPctClass || "U";
-        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${(entry.note.peakRanking ?? 0).toFixed(2)}% (${entry.note.peakClass || "U"})<br>Current: ${(entry.note.currentRanking ?? 0).toFixed(2)}% (${calcClass})<br>Official: ${officialClass}`;
+        const summaryPrefix = `<strong style="color:${colorValue}">${entry.key}</strong><br>Peak: ${formatDisplayNumber(entry.note.peakRanking ?? 0)}% (${entry.note.peakClass || "U"})<br>Current: ${formatDisplayNumber(entry.note.currentRanking ?? 0)}% (${calcClass})<br>Official: ${officialClass}`;
 
         if (!entry.note.nextClass) {
           box.innerHTML = `${summaryPrefix}<br>Already at top class.`;
         } else if (entry.note.requiredAverage == null) {
           box.innerHTML = `${summaryPrefix}<br>Next ${entry.note.nToAdd} classifiers: target ${entry.note.nextClass} not computable.`;
         } else {
-          box.innerHTML = `${summaryPrefix}<br>Need about <strong>${entry.note.requiredAverage.toFixed(2)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
+          box.innerHTML = `${summaryPrefix}<br>Need about <strong>${formatDisplayNumber(entry.note.requiredAverage)}%</strong> average over next ${entry.note.nToAdd} unique classifier${entry.note.nToAdd === 1 ? "" : "s"} to reach ${entry.note.nextClass}.`;
         }
         content.appendChild(box);
       });
@@ -1974,7 +2283,7 @@
         svg.append("g").selectAll("circle").data(serie.values).join("circle")
           .attr("cx", d => x(d.date)).attr("cy", d => y(d.rating)).attr("r", 3.25).attr("fill", color(serie.key))
           .on("mousemove", (event, d) => {
-            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Rating after: ${d.rating.toFixed(2)}${d.ratingBefore !== null ? `<br>Rating before: ${d.ratingBefore.toFixed(2)}` : ""}${d.matchPct !== null ? `<br>Match %: ${d.matchPct.toFixed(2)}` : ""}${d.matchName ? `<br>${d.matchName}` : ""}`;
+            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Rating after: ${formatDisplayNumber(d.rating)}${d.ratingBefore !== null ? `<br>Rating before: ${formatDisplayNumber(d.ratingBefore)}` : ""}${d.matchPct !== null ? `<br>Match %: ${formatDisplayNumber(d.matchPct)}` : ""}${d.matchName ? `<br>${d.matchName}` : ""}`;
             positionTooltip(event, tooltip);
           })
           .on("mouseleave", () => tooltip.style.opacity = 0);
@@ -2116,7 +2425,7 @@
               const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
               const isThrownOutLowest = thrownOutLowestRows.some(item => classifierKey(item) === classifierKey(d));
               const isExcluded = isExcludedClassifier(d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${isThrownOutLowest ? `<br>In most recent valid 8 · thrown out as one of the 2 lowest` : ""}${isExcluded ? `<br>Excluded from all calculations` : `<br>Click to exclude/include`}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${d.hitfactor.toFixed(2)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${d.manualHitfactor.toFixed(2)}` : "")}<br>HHF %: ${d.hhfPct.toFixed(2)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
+              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${isThrownOutLowest ? `<br>In most recent valid 8 · thrown out as one of the 2 lowest` : ""}${isExcluded ? `<br>Excluded from all calculations` : `<br>Click to exclude/include`}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${formatDisplayNumber(d.hitfactor)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${formatDisplayNumber(d.manualHitfactor)}` : "")}<br>HHF %: ${formatDisplayNumber(d.hhfPct)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
               positionTooltip(event, tooltip);
             })
             .on("mouseleave", () => tooltip.style.opacity = 0);
@@ -2185,7 +2494,7 @@
         svg.append("g").selectAll("circle.rank").data(serie.rankings).join("circle")
           .attr("cx", d => x(d.date)).attr("cy", d => y(Math.max(0, d.ranking))).attr("r", 2.6).attr("fill", color(serie.key))
           .on("mousemove", (event, d) => {
-            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Calculated ranking: ${d.ranking.toFixed(2)}%`;
+            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Calculated ranking: ${formatDisplayNumber(d.ranking)}%`;
             positionTooltip(event, tooltip);
           })
           .on("mouseleave", () => tooltip.style.opacity = 0);
