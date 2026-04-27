@@ -158,7 +158,28 @@
       border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
       font-size: 12px; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.35);
       opacity: 0; max-width: 340px; z-index: 20; line-height: 1.45; white-space: normal; word-break: break-word;
+      transition: opacity 0.12s ease;
     }
+    .tooltip.is-visible { opacity: 1; }
+    .tooltip.is-pinned { pointer-events: auto; }
+    .tooltip-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .tooltip-btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tooltip-btn.exclude { background: linear-gradient(180deg, #b91c1c, #7f1d1d); }
     .empty {
       display: grid; place-items: center; color: var(--muted); text-align: center;
       padding: 24px; width: 100%; height: 100%;
@@ -226,6 +247,8 @@
       input, select { min-height: 44px; font-size: 16px; width: 100%; max-width: 100%; }
       #manualClassifierCode, #manualHitfactor { font-variant-numeric: tabular-nums; }
       .tooltip { max-width: min(300px, calc(100vw - 28px)); font-size: 11px; }
+      .tooltip-actions { flex-direction: column; }
+      .tooltip-btn { width: 100%; min-height: 40px; }
       .whatif-panel { padding: 8px 10px; }
       .whatif-panel-content { grid-template-columns: 1fr; }
       .whatif-panel { order: 2; }
@@ -556,7 +579,9 @@
       mobileOrientation: null,
       pendingManualScores: [],
       excludedKeys: new Set(),
-      classifierInfoCache: new Map()
+      classifierInfoCache: new Map(),
+      pinnedTooltip: null,
+      pinnedTooltipAnchor: null
     };
 
     const els = {
@@ -2100,9 +2125,91 @@
       if (!tooltip) {
         tooltip = document.createElement("div");
         tooltip.className = "tooltip";
+        tooltip.addEventListener("mouseleave", () => {
+          if (!state.pinnedTooltip) hideTooltip();
+        });
         els.chartContainer.appendChild(tooltip);
       }
       return tooltip;
+    }
+
+    function hideTooltip(force = false) {
+      const tooltip = getTooltip();
+      if (!force && state.pinnedTooltip) return;
+      tooltip.classList.remove("is-visible", "is-pinned");
+      tooltip.style.opacity = 0;
+      state.pinnedTooltip = null;
+      state.pinnedTooltipAnchor = null;
+    }
+
+    function buildTooltipHtml(d, options = {}) {
+      const lines = [
+        `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong>`,
+        d.date instanceof Date ? d.date.toISOString().slice(0, 10) : ""
+      ].filter(Boolean);
+
+      if (options.codeLine) lines.push(options.codeLine);
+      if (options.manualLine) lines.push(options.manualLine);
+      if (options.calcLine) lines.push(options.calcLine);
+      if (options.lowestLine) lines.push(options.lowestLine);
+      if (options.statusLine) lines.push(options.statusLine);
+      if (options.extraLine) lines.push(options.extraLine);
+      if (Number.isFinite(d.hitfactor)) lines.push(`Scored HF: ${formatDisplayNumber(d.hitfactor)}`);
+      else if (Number.isFinite(d.manualHitfactor)) lines.push(`Scored HF: ${formatDisplayNumber(d.manualHitfactor)}`);
+      if (Number.isFinite(d.hhfPct)) lines.push(`HHF %: ${formatDisplayNumber(d.hhfPct)}`);
+      if (options.ratingLine) lines.push(options.ratingLine);
+      if (options.ratingBeforeLine) lines.push(options.ratingBeforeLine);
+      if (options.matchPctLine) lines.push(options.matchPctLine);
+      if (d.matchName) lines.push(d.matchName);
+      if (options.replacedLine) lines.push(options.replacedLine);
+
+      const actions = options.showExcludeButton ? `
+        <div class="tooltip-actions">
+          <button type="button" class="tooltip-btn exclude" data-tooltip-action="toggle-exclude">${options.excludeLabel || "Exclude from calc"}</button>
+          <button type="button" class="tooltip-btn" data-tooltip-action="close-tooltip">Close</button>
+        </div>
+      ` : "";
+
+      return `${lines.join("<br>")}${actions}`;
+    }
+
+    function setTooltipContent(tooltip, html, context = null) {
+      tooltip.innerHTML = html;
+      tooltip.querySelectorAll("[data-tooltip-action]").forEach(btn => {
+        btn.addEventListener("click", event => {
+          event.stopPropagation();
+          const action = btn.getAttribute("data-tooltip-action");
+          if (action === "close-tooltip") {
+            hideTooltip(true);
+            return;
+          }
+          if (action === "toggle-exclude" && context?.datum) {
+            toggleClassifierExclusion(context.datum);
+          }
+        });
+      });
+    }
+
+    function showTooltip(event, html, options = {}) {
+      const tooltip = getTooltip();
+      const isPinned = !!options.pinned;
+      if (state.pinnedTooltip && !isPinned) return;
+      setTooltipContent(tooltip, html, options.context || null);
+      tooltip.classList.add("is-visible");
+      tooltip.classList.toggle("is-pinned", isPinned);
+      tooltip.style.opacity = 1;
+      positionTooltip(event, tooltip, options.anchor || null);
+      state.pinnedTooltip = isPinned ? { html, context: options.context || null } : null;
+      state.pinnedTooltipAnchor = isPinned ? (options.anchor || null) : null;
+    }
+
+    function toggleClassifierExclusion(d) {
+      const key = classifierKey(d);
+      if (state.excludedKeys.has(key)) state.excludedKeys.delete(key);
+      else state.excludedKeys.add(key);
+      hideTooltip(true);
+      syncUrlState(true);
+      render();
     }
 
     function showEmpty(message) {
@@ -2158,18 +2265,19 @@
       els.whatIfPanel.style.display = "block";
     }
 
-    function positionTooltip(event, tooltip) {
+    function positionTooltip(event, tooltip, anchor = null) {
       const containerRect = els.chartContainer.getBoundingClientRect();
       const pad = 12;
-      tooltip.style.opacity = 1;
       tooltip.style.left = "0px";
       tooltip.style.top = "0px";
       const ttRect = tooltip.getBoundingClientRect();
-      let left = event.clientX - containerRect.left + 14;
-      let top = event.clientY - containerRect.top - ttRect.height - 14;
-      if (left + ttRect.width + pad > containerRect.width) left = event.clientX - containerRect.left - ttRect.width - 14;
+      const anchorX = Number.isFinite(anchor?.x) ? anchor.x : (event?.clientX != null ? event.clientX - containerRect.left : containerRect.width / 2);
+      const anchorY = Number.isFinite(anchor?.y) ? anchor.y : (event?.clientY != null ? event.clientY - containerRect.top : containerRect.height / 2);
+      let left = anchorX + 14;
+      let top = anchorY - ttRect.height - 14;
+      if (left + ttRect.width + pad > containerRect.width) left = anchorX - ttRect.width - 14;
       if (left < pad) left = pad;
-      if (top < pad) top = event.clientY - containerRect.top + 14;
+      if (top < pad) top = anchorY + 14;
       if (top + ttRect.height + pad > containerRect.height) top = Math.max(pad, containerRect.height - ttRect.height - pad);
       tooltip.style.left = `${left}px`;
       tooltip.style.top = `${top}px`;
@@ -2283,10 +2391,13 @@
         svg.append("g").selectAll("circle").data(serie.values).join("circle")
           .attr("cx", d => x(d.date)).attr("cy", d => y(d.rating)).attr("r", 3.25).attr("fill", color(serie.key))
           .on("mousemove", (event, d) => {
-            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Rating after: ${formatDisplayNumber(d.rating)}${d.ratingBefore !== null ? `<br>Rating before: ${formatDisplayNumber(d.ratingBefore)}` : ""}${d.matchPct !== null ? `<br>Match %: ${formatDisplayNumber(d.matchPct)}` : ""}${d.matchName ? `<br>${d.matchName}` : ""}`;
-            positionTooltip(event, tooltip);
+            showTooltip(event, buildTooltipHtml(d, {
+              ratingLine: `Rating after: ${formatDisplayNumber(d.rating)}`,
+              ratingBeforeLine: d.ratingBefore !== null ? `Rating before: ${formatDisplayNumber(d.ratingBefore)}` : "",
+              matchPctLine: d.matchPct !== null ? `Match %: ${formatDisplayNumber(d.matchPct)}` : ""
+            }));
           })
-          .on("mouseleave", () => tooltip.style.opacity = 0);
+          .on("mouseleave", () => hideTooltip());
       });
 
       els.chartContainer.appendChild(svg.node());
@@ -2405,30 +2516,60 @@
             .attr("stroke-width", 1)
             .style("pointer-events", "none");
 
-          svg.append("g").selectAll("circle.classifier").data(serie.classifiers).join("circle")
+          const classifierPointLayer = svg.append("g");
+
+          classifierPointLayer.selectAll("circle.classifier-hitbox").data(serie.classifiers).join("circle")
+            .attr("class", "classifier-hitbox")
+            .attr("cx", d => x(d.date))
+            .attr("cy", d => y(d.hhfPct))
+            .attr("r", d => d.isManual ? 18 : 16)
+            .attr("fill", "transparent")
+            .style("cursor", "pointer")
+            .on("mousemove", (event, d) => {
+              const removedState = findRemovedClassifierState(serie.classifiers, d);
+              const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
+              const isThrownOutLowest = thrownOutLowestRows.some(item => classifierKey(item) === classifierKey(d));
+              const isExcluded = isExcludedClassifier(d);
+              showTooltip(event, buildTooltipHtml(d, {
+                codeLine: `${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}`,
+                manualLine: d.isManual ? "Manual score" : "",
+                calcLine: isCurrentCalc ? "Used in current calc" : "",
+                lowestLine: isThrownOutLowest ? "In most recent valid 8 · thrown out as one of the 2 lowest" : "",
+                statusLine: isExcluded ? "Excluded from all calculations" : "Tap or click for actions",
+                replacedLine: removedState?.replacedBy?.date ? `Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""
+              }));
+            })
+            .on("mouseleave", () => hideTooltip())
+            .on("click", (event, d) => {
+              event.stopPropagation();
+              const removedState = findRemovedClassifierState(serie.classifiers, d);
+              const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
+              const isThrownOutLowest = thrownOutLowestRows.some(item => classifierKey(item) === classifierKey(d));
+              const isExcluded = isExcludedClassifier(d);
+              showTooltip(event, buildTooltipHtml(d, {
+                codeLine: `${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}`,
+                manualLine: d.isManual ? "Manual score" : "",
+                calcLine: isCurrentCalc ? "Used in current calc" : "",
+                lowestLine: isThrownOutLowest ? "In most recent valid 8 · thrown out as one of the 2 lowest" : "",
+                statusLine: isExcluded ? "Excluded from all calculations" : "Choose an action below",
+                replacedLine: removedState?.replacedBy?.date ? `Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : "",
+                showExcludeButton: true,
+                excludeLabel: isExcluded ? "Include in calc" : "Exclude from calc"
+              }), {
+                pinned: true,
+                context: { datum: d },
+                anchor: { x: x(d.date), y: y(d.hhfPct) }
+              });
+            });
+
+          classifierPointLayer.selectAll("circle.classifier").data(serie.classifiers).join("circle")
             .attr("cx", d => x(d.date))
             .attr("cy", d => y(d.hhfPct))
             .attr("r", d => d.isManual ? 5.5 : 4)
             .attr("fill", d => d.isManual ? "#020617" : color(serie.key))
             .attr("stroke", d => d.isManual ? color(serie.key) : "none")
             .attr("stroke-width", d => d.isManual ? 2 : 0)
-            .style("cursor", "pointer")
-            .on("click", (event, d) => {
-              const key = classifierKey(d);
-              if (state.excludedKeys.has(key)) state.excludedKeys.delete(key);
-              else state.excludedKeys.add(key);
-              syncUrlState(true);
-              render();
-            })
-            .on("mousemove", (event, d) => {
-              const removedState = findRemovedClassifierState(serie.classifiers, d);
-              const isCurrentCalc = isCurrentCalcPoint(serie.classifiers, d);
-              const isThrownOutLowest = thrownOutLowestRows.some(item => classifierKey(item) === classifierKey(d));
-              const isExcluded = isExcludedClassifier(d);
-              tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>${d.code}${d.classifierName ? ` · ${d.classifierName}` : ""}${d.isManual ? `<br>Manual score` : ""}${isCurrentCalc ? `<br>Used in current calc` : ""}${isThrownOutLowest ? `<br>In most recent valid 8 · thrown out as one of the 2 lowest` : ""}${isExcluded ? `<br>Excluded from all calculations` : `<br>Click to exclude/include`}${Number.isFinite(d.hitfactor) ? `<br>Scored HF: ${formatDisplayNumber(d.hitfactor)}` : (Number.isFinite(d.manualHitfactor) ? `<br>Scored HF: ${formatDisplayNumber(d.manualHitfactor)}` : "")}<br>HHF %: ${formatDisplayNumber(d.hhfPct)}${d.matchName ? `<br>${d.matchName}` : ""}${removedState?.replacedBy?.date ? `<br>Removed from current calc · replaced by ${removedState.replacedBy.date.toISOString().slice(0, 10)}` : ""}`;
-              positionTooltip(event, tooltip);
-            })
-            .on("mouseleave", () => tooltip.style.opacity = 0);
+            .style("pointer-events", "none");
 
           const excludedX = svg.append("g");
           excludedX.selectAll("line.excluded-a").data(excludedRows).join("line")
@@ -2494,10 +2635,11 @@
         svg.append("g").selectAll("circle.rank").data(serie.rankings).join("circle")
           .attr("cx", d => x(d.date)).attr("cy", d => y(Math.max(0, d.ranking))).attr("r", 2.6).attr("fill", color(serie.key))
           .on("mousemove", (event, d) => {
-            tooltip.innerHTML = `<strong>${normalizeDisplayName(d.shooterName)} · ${formatDivisionLabel(d.division)}</strong><br>${d.date.toISOString().slice(0, 10)}<br>Calculated ranking: ${formatDisplayNumber(d.ranking)}%`;
-            positionTooltip(event, tooltip);
+            showTooltip(event, buildTooltipHtml(d, {
+              extraLine: `Calculated ranking: ${formatDisplayNumber(d.ranking)}%`
+            }));
           })
-          .on("mouseleave", () => tooltip.style.opacity = 0);
+          .on("mouseleave", () => hideTooltip());
       });
 
 
@@ -2581,6 +2723,13 @@
         initChartHeight(true);
         render();
       }, 150);
+    });
+
+    document.addEventListener("click", event => {
+      const tooltip = els.chartContainer?.querySelector(".tooltip");
+      if (!tooltip || !state.pinnedTooltip) return;
+      if (tooltip.contains(event.target)) return;
+      hideTooltip(true);
     });
 
     initControls();
